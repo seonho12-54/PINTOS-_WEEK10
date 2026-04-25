@@ -29,6 +29,9 @@ static bool too_many_loops (unsigned loops);
 static void busy_wait (int64_t loops);
 static void real_time_sleep (int64_t num, int32_t denom);
 
+// list.h에 있는 구조체를 활용하여 queue(linked_list) 방식으로 구현 
+static struct list sleep_list; 
+
 /* Sets up the 8254 Programmable Interval Timer (PIT) to
    interrupt PIT_FREQ times per second, and registers the
    corresponding interrupt. */
@@ -89,12 +92,29 @@ timer_elapsed (int64_t then) {
 
 /* Suspends execution for approximately TICKS timer ticks. */
 void
-timer_sleep (int64_t ticks) {
-	int64_t start = timer_ticks ();
+timer_sleep (int64_t ticks) {	
+	if (ticks <= 0) {
+		return; 
+	}
 
-	ASSERT (intr_get_level () == INTR_ON);
-	while (timer_elapsed (start) < ticks)
-		thread_yield ();
+	ASSERT (intr_get_level () == INTR_ON); // 인터럽트가 켜져 있는지 검사 후 아닐 경우 에러
+
+	enum intr_level old_level = intr_disable();
+	int64_t start = timer_ticks();
+
+	// 1. 깨어날 시간 계산 (wakeup_tick = current_tick + ticks)	
+	struct thread *cur = thread_current();
+	cur->wakeup_tick = start + ticks; 
+	
+	// 2. sleep_list에 현재 스레드 삽입
+	list_push_back(&sleep_list, &cur->elem);
+
+    // 3. thread_block();
+	thread_block();
+	intr_set_level(old_level); 
+	
+ 	// while (timer_elapsed (start) < ticks)
+	// 	thread_yield ();
 }
 
 /* Suspends execution for approximately MS milliseconds. */
