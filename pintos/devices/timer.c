@@ -32,6 +32,16 @@ static void real_time_sleep (int64_t num, int32_t denom);
 // list.h에 있는 구조체를 활용하여 queue(linked_list) 방식으로 구현 
 static struct list sleep_list; 
 
+
+// wakeup_tick 오름차순 비교를 제공해 sleep_list 정렬을 유지하는 함수
+static bool thread_compare_wakeup(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED) {
+	// 비교 기준은 오직 wakeup_tick 값으로 한다.
+	struct thread *ta = list_entry(a, struct thread, elem);//a를 스레드 구조체로 변환
+	struct thread *tb = list_entry(b, struct thread, elem);//b를 스레드 구조체로 변환
+	// 더 이른 tick에 깨어나야 할 스레드가 앞에 오도록 true/false를 반환한다.
+	return ta->wakeup_tick < tb->wakeup_tick; // ta의 wakeup_tick이 tb의 wakeup_tick보다 작으면 true, 크면 false 반환
+}
+
 /* Sets up the 8254 Programmable Interval Timer (PIT) to
    interrupt PIT_FREQ times per second, and registers the
    corresponding interrupt. */
@@ -93,28 +103,32 @@ timer_elapsed (int64_t then) {
 /* Suspends execution for approximately TICKS timer ticks. */
 void
 timer_sleep (int64_t ticks) {	
+	// ticks <= 0이면 상태를 바꾸지 않고 즉시 반환한다.
 	if (ticks <= 0) {
 		return; 
 	}
 
-	ASSERT (intr_get_level () == INTR_ON); // 인터럽트가 켜져 있는지 검사 후 아닐 경우 에러
+	// 인터럽트가 켜져 있는지 검사 후 아닐 경우 에러 발생
+	ASSERT (intr_get_level () == INTR_ON); 
 
+    // sleep 등록부터 block까지는 인터럽트 경합이 없도록 원자 구간에서 처리한다.
 	enum intr_level old_level = intr_disable();
 	int64_t start = timer_ticks();
 
-	// 1. 깨어날 시간 계산 (wakeup_tick = current_tick + ticks)	
+	// wakeup_tick은 "현재 tick + 요청 tick"으로 계산해 현재 스레드에 기록한다.
 	struct thread *cur = thread_current();
 	cur->wakeup_tick = start + ticks; 
 	
-	// 2. sleep_list에 현재 스레드 삽입
-	list_push_back(&sleep_list, &cur->elem);
+	// 현재 스레드는 sleep_list에 wakeup_tick 기준 오름차순으로 삽입한다.
+	list_insert_ordered(&sleep_list, &cur->elem, thread_compare_wakeup, NULL);
 
-    // 3. thread_block();
-	thread_block();
-	intr_set_level(old_level); 
+    // 함수 종료 전에 인터럽트 레벨을 원래 상태로 복원한다.
+	thread_block(); // 등록이 끝난 스레드는 thread_block()으로 BLOCKED 상태로 전이한다.
+	intr_set_level(old_level); // 함수 종료 전에 인터럽트 레벨을 원래 상태로 복원한다.
 	
- 	// while (timer_elapsed (start) < ticks)
-	// 	thread_yield ();
+	// busy-wait 방식으로 구현할 경우 아래와 같이 구현할 수 있다.
+ 	// while (timer_elapsed (start) < ticks) // 현재 시간과 깨어날 시간의 차이가 ticks보다 작으면 루프를 돈다.
+	//   thread_yield(); // 양보 후 다시 검사하는 방식으로 구현할 수 있다. 이 방식은 비효율적이지만 인터럽트 경합을 방지할 수 있다.
 }
 
 /* Suspends execution for approximately MS milliseconds. */
@@ -145,7 +159,7 @@ timer_print_stats (void) {
 static void
 timer_interrupt (struct intr_frame *args UNUSED) {
 	ticks++;
-	thread_tick ();
+	thread_tick (); // 스레드 틱 증가
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer
