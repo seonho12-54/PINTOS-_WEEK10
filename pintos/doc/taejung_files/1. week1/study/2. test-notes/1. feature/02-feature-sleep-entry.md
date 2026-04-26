@@ -52,14 +52,21 @@ sequenceDiagram
 
 ## 4. 구현 주석 (구현 필요 함수 전체)
 
-### 4.1 `timer_init()` 구현 주석
+### 4.1 `sleep_list` 선언/소유 구현 주석
+- 위치: `pintos/devices/timer.c` (전역 정적 변수)
+- 역할: Alarm Clock에서 "잠든 스레드 집합"을 보관하는 핵심 자료구조를 제공한다.
+- 규칙 1: `sleep_list`는 `static struct list sleep_list;` 형태로 타이머 모듈 내부에 선언한다.
+- 규칙 2: 이 리스트에는 sleep 중인 스레드만 들어가고, ready/running 스레드는 포함하지 않는다.
+- 규칙 3: 리스트 정렬 불변식은 `wakeup_tick` 오름차순으로 유지한다.
+
+### 4.2 `timer_init()` 구현 주석
 - 위치: `pintos/devices/timer.c`
 - 역할: sleep 기능에서 사용할 `sleep_list`의 초기 상태를 보장한다.
 - 규칙 1: `sleep_list`는 사용 전에 반드시 `list_init(&sleep_list)`로 초기화한다.
 - 규칙 2: 이 초기화는 타이머 모듈 초기화 시점(`timer_init`)에 1회 수행한다.
 - 규칙 3: 인터럽트 핸들러 등록 전에 리스트 초기화를 끝내 일관된 상태를 보장한다.
 
-### 4.2 `timer_sleep()` 구현 주석
+### 4.3 `timer_sleep()` 구현 주석
 - 위치: `pintos/devices/timer.c`
 - 역할: 현재 스레드를 sleep 경로에 등록하고 `BLOCKED` 상태로 전이한다.
 - 규칙 1: `ticks <= 0`이면 상태를 바꾸지 않고 즉시 반환한다.
@@ -69,13 +76,13 @@ sequenceDiagram
 - 규칙 5: 등록이 끝난 스레드는 `thread_block()`으로 `BLOCKED` 상태로 전이한다.
 - 규칙 6: 함수 종료 전에 인터럽트 레벨을 원래 상태로 복원한다.
 
-### 4.3 `thread_compare_wakeup()` 구현 주석
+### 4.4 `thread_compare_wakeup()` 구현 주석
 - 위치: `pintos/devices/timer.c`
 - 역할: `sleep_list` 정렬 규칙(`wakeup_tick` 오름차순)을 유지하는 비교를 제공한다.
 - 규칙 1: 비교 기준은 오직 `wakeup_tick` 값으로 한다.
 - 규칙 2: 더 이른 tick에 깨어나야 할 스레드가 앞에 오도록 true/false를 반환한다.
 
-### 4.4 범위 경계 메모 (02 -> 03 연계)
+### 4.5 범위 경계 메모 (02 -> 03 연계)
 - `timer_interrupt()`의 wake-up 실행 상세는 `03-feature-wakeup-execution-on-tick.md`의 구현 범위다.
 - 이 문서(02)에서는 `timer_sleep()`이 정렬/등록까지 정확히 수행해 03에서 head 기반 반복 깨우기가 가능하도록 만드는 것에 집중한다.
 

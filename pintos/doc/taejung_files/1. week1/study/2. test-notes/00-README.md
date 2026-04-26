@@ -12,11 +12,9 @@
 2. `1. feature/02-feature-sleep-entry.md`
 3. `1. feature/03-feature-wakeup-execution-on-tick.md`
 4. `1. feature/04-feature-scheduler-integration.md`
-5. `1. feature/05-feature-failure-patterns.md`
-6. `1. feature/06-feature-validation-by-tests.md`
-8. `2. testing/00-README.md`
-9. `2. testing/01-alarm-zero.md` ~ `2. testing/05-alarm-priority.md`
-10. 필요 시 템플릿 사용
+5. `2. testing/00-README.md`
+6. `2. testing/01-alarm-zero.md` ~ `2. testing/05-alarm-priority.md`
+7. 필요 시 템플릿 사용
    - `../1. note-templates/TEMPLATE-feature-note.md`
    - `../1. note-templates/TEMPLATE-testing-note.md`
 
@@ -25,8 +23,6 @@
 - `1. feature/02`: 잠들기 진입 + 깨움 대상 관리 기능
 - `1. feature/03`: tick 기반 깨우기 실행 기능
 - `1. feature/04`: 스케줄러 연계 기능
-- `1. feature/05`: 자주 실패하는 패턴 정리
-- `1. feature/06`: 테스트로 검증 닫는 기준
 - `2. testing/00`: 테스트 검증 인덱스
 - `2. testing/01~05`: 테스트별 구현/검증 문서
 - `../1. note-templates/*`: 새 문서 작성용 템플릿

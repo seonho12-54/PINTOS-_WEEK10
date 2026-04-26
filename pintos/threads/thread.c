@@ -62,6 +62,9 @@ static void init_thread (struct thread *, const char *name, int priority);
 static void do_schedule(int status);
 static void schedule (void);
 static tid_t allocate_tid (void);
+static bool cmp_priority (const struct list_elem *a,
+						  const struct list_elem *b,
+						  void *aux UNUSED);
 
 /* Returns true if T appears to point to a valid thread. */
 #define is_thread(t) ((t) != NULL && (t)->magic == THREAD_MAGIC)
@@ -72,6 +75,15 @@ static tid_t allocate_tid (void);
  * always at the beginning of a page and the stack pointer is
  * somewhere in the middle, this locates the curent thread. */
 #define running_thread() ((struct thread *) (pg_round_down (rrsp ())))
+
+static bool
+cmp_priority (const struct list_elem *a,
+			  const struct list_elem *b,
+			  void *aux UNUSED) {
+	const struct thread *ta = list_entry (a, struct thread, elem);
+	const struct thread *tb = list_entry (b, struct thread, elem);
+	return ta->priority > tb->priority;
+}
 
 
 // Global descriptor table for the thread_start.
@@ -218,10 +230,11 @@ thread_create (const char *name, int priority,
    primitives in synch.h. */
 void
 thread_block (void) {
-	ASSERT (!intr_context ());
-	ASSERT (intr_get_level () == INTR_OFF);
-	thread_current ()->status = THREAD_BLOCKED;
-	schedule ();
+	ASSERT (!intr_context ());// 인터럽트 컨텍스트에 있는지 검사
+	ASSERT (intr_get_level () == INTR_OFF); // 인터럽트 레벨이 OFF인지 검사
+	// sleep 진입 스레드는 RUNNING -> BLOCKED 상태 전이가 보장되어야 한다.
+	thread_current ()->status = THREAD_BLOCKED; // 스레드 상태를 BLOCKED로 변경
+	schedule (); // 스케줄러 호출
 }
 
 /* Transitions a blocked thread T to the ready-to-run state.
@@ -240,7 +253,12 @@ thread_unblock (struct thread *t) {
 
 	old_level = intr_disable ();
 	ASSERT (t->status == THREAD_BLOCKED);
-	list_push_back (&ready_list, &t->elem);
+
+	// 깨운 스레드를 우선순위 규칙에 맞게 ready_list에 복귀시킨다.
+	// ready_list 삽입은 단순 push_back이 아니라 list_insert_ordered(..., cmp_priority, ...)로 처리한다.
+	// THREAD_BLOCKED -> THREAD_READY 전이는 기존처럼 인터럽트 비활성 구간에서 수행한다.
+	list_insert_ordered(&ready_list, &t->elem, cmp_priority, NULL);
+	
 	t->status = THREAD_READY;
 	intr_set_level (old_level);
 }
@@ -302,8 +320,11 @@ thread_yield (void) {
 	ASSERT (!intr_context ());
 
 	old_level = intr_disable ();
-	if (curr != idle_thread)
-		list_push_back (&ready_list, &curr->elem);
+	if (curr != idle_thread)// idle thread는 기존과 동일하게 ready queue 삽입 대상에서 제외한다.
+		// 현재 실행 스레드가 양보할 때도 ready queue의 priority 규칙을 깨지 않게 유지한다.	
+		// curr를 ready_list에 되돌릴 때도 list_insert_ordered(..., cmp_priority, ...)를 사용해 priority 순서를 유지해야 한다.
+		list_insert_ordered(&ready_list, &curr->elem, cmp_priority, NULL);
+	
 	do_schedule (THREAD_READY);
 	intr_set_level (old_level);
 }

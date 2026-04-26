@@ -39,24 +39,30 @@ stateDiagram-v2
 
 ## 4. 구현 주석 (구현 필요 함수 전체)
 
-### 4.1 `thread_block()` 구현 주석
-- 위치: `pintos/threads/thread.c`
-- 역할: sleep 진입 스레드를 실행 경로에서 제외하고 `BLOCKED` 상태로 전이한다.
-- 규칙 1: sleep 진입 스레드는 `RUNNING -> BLOCKED` 상태 전이가 보장되어야 한다.
-- 규칙 2: block된 스레드는 ready queue에서 즉시 제외되어야 한다.
+### 4.1 `cmp_priority()` 비교 함수
+- 위치: `pintos/threads/thread.c` (static helper)
+- 역할: `ready_list` 정렬 삽입에서 "높은 priority가 앞" 규칙을 정의한다.
+- 규칙 1: 비교 기준은 `thread.priority`로 고정한다.
+- 규칙 2: 높은 priority가 먼저 오도록 반환값을 구성한다.
 
-### 4.2 `thread_unblock()` 구현 주석
+### 4.2 `thread_unblock()` ready queue 삽입 정책
 - 위치: `pintos/threads/thread.c`
-- 역할: wake 대상 스레드를 `READY`로 되돌려 scheduler 선택 대상에 다시 포함시킨다.
-- 규칙 1: wake 대상 스레드는 `BLOCKED -> READY` 전이가 보장되어야 한다.
-- 규칙 2: READY 전이 시 우선순위 규칙을 깨지 않는 큐 삽입 정책을 따라야 한다.
+- 역할: 깨운 스레드를 우선순위 규칙에 맞게 `ready_list`에 복귀시킨다.
+- 규칙 1: `ready_list` 삽입은 단순 `push_back`이 아니라 `list_insert_ordered(..., cmp_priority, ...)`로 처리한다.
+- 규칙 2: `THREAD_BLOCKED -> THREAD_READY` 전이는 기존처럼 인터럽트 비활성 구간에서 수행한다.
 
-### 4.3 Alarm-스케줄러 경계 규칙
-- 위치: `pintos/devices/timer.c` + `pintos/threads/thread.c`
-- 역할: Alarm과 scheduler의 책임 경계를 분리해 우선순위 회귀를 방지한다.
-- 규칙 1: Alarm은 wake 조건 판단과 unblock까지만 수행한다.
-- 규칙 2: 실제 실행 스레드 선택은 scheduler가 담당한다.
-- 규칙 3: "깨움"과 "즉시 실행"을 동일 개념으로 다루지 않는다.
+### 4.3 `thread_yield()`의 재삽입 정책
+- 위치: `pintos/threads/thread.c`
+- 역할: 현재 실행 스레드가 양보할 때도 ready queue의 priority 규칙을 깨지 않게 유지한다.
+- 규칙 1: `curr`를 `ready_list`에 되돌릴 때도 `list_insert_ordered(..., cmp_priority, ...)`를 사용해 priority 순서를 유지해야 한다.
+- 규칙 2: idle thread는 기존과 동일하게 ready queue 삽입 대상에서 제외한다.
+
+### 4.4 `timer_interrupt()` 선점 트리거 구현
+- 위치: `pintos/devices/timer.c` (`timer_interrupt()` wake 루프 이후)
+- 역할: 인터럽트 핸들러에서 깨운 스레드가 현재 스레드보다 우선순위가 높을 때 선점 예약을 건다.
+- 규칙 1: wake 루프에서 `thread_unblock(t)`를 호출한 직후, `t->priority > thread_current()->priority` 조건을 검사한다.
+- 규칙 2: 위 조건을 만족한 스레드가 하나라도 있으면 `intr_yield_on_return()`을 호출해 인터럽트 복귀 시점 선점을 예약한다.
+- 규칙 3: 인터럽트 컨텍스트에서는 `thread_yield()`를 직접 호출하지 않는다.
 
 ## 5. 테스팅 방법
 - `alarm-priority`: READY 전이 이후 priority 반영 검증

@@ -86,8 +86,6 @@ sequenceDiagram
 1. `02-feature-sleep-entry.md` — 스레드를 어떻게 잠재우고, 깨움 대상을 어떻게 정렬 관리하는가
 2. `03-feature-wakeup-execution-on-tick.md` — tick마다 어떻게 실제로 깨우는가
 3. `04-feature-scheduler-integration.md` — 깨운 후 스케줄러와 어떻게 맞물리는가
-4. `05-feature-failure-patterns.md` — 어디서 주로 실패하는가
-5. `06-feature-validation-by-tests.md` — 테스트로 어떻게 검증을 닫는가
 
 ---
 
