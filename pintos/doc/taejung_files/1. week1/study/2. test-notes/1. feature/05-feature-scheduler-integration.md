@@ -41,16 +41,19 @@ stateDiagram-v2
 
 ### 4.1 `thread_block()` 구현 주석
 - 위치: `pintos/threads/thread.c`
+- 역할: sleep 진입 스레드를 실행 경로에서 제외하고 `BLOCKED` 상태로 전이한다.
 - 규칙 1: sleep 진입 스레드는 `RUNNING -> BLOCKED` 상태 전이가 보장되어야 한다.
 - 규칙 2: block된 스레드는 ready queue에서 즉시 제외되어야 한다.
 
 ### 4.2 `thread_unblock()` 구현 주석
 - 위치: `pintos/threads/thread.c`
+- 역할: wake 대상 스레드를 `READY`로 되돌려 scheduler 선택 대상에 다시 포함시킨다.
 - 규칙 1: wake 대상 스레드는 `BLOCKED -> READY` 전이가 보장되어야 한다.
 - 규칙 2: READY 전이 시 우선순위 규칙을 깨지 않는 큐 삽입 정책을 따라야 한다.
 
 ### 4.3 Alarm-스케줄러 경계 규칙
 - 위치: `pintos/devices/timer.c` + `pintos/threads/thread.c`
+- 역할: Alarm과 scheduler의 책임 경계를 분리해 우선순위 회귀를 방지한다.
 - 규칙 1: Alarm은 wake 조건 판단과 unblock까지만 수행한다.
 - 규칙 2: 실제 실행 스레드 선택은 scheduler가 담당한다.
 - 규칙 3: "깨움"과 "즉시 실행"을 동일 개념으로 다루지 않는다.
