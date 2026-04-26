@@ -46,18 +46,21 @@ sequenceDiagram
 
 ### 4.1 `thread_compare_wakeup()` 구현 주석
 - 위치: `pintos/devices/timer.c`
+- 역할: `sleep_list`가 wakeup tick 오름차순을 유지하도록 비교 기준을 제공한다.
 - 규칙 1: 비교 기준은 `wakeup_tick` 하나로 고정한다.
 - 규칙 2: 더 이른 tick이 리스트 앞에 오도록 true/false를 반환한다.
 - 규칙 3: 비교 함수는 side effect 없이 순수 비교만 수행한다.
 
 ### 4.2 `timer_sleep()`의 정렬 삽입 구현 주석
 - 위치: `pintos/devices/timer.c`
+- 역할: sleep 대상 스레드를 정렬 규칙에 맞춰 `sleep_list`에 등록한다.
 - 규칙 1: sleep 진입 시 현재 스레드를 `sleep_list`에 정렬 삽입한다.
 - 규칙 2: 삽입 기준은 반드시 `thread_compare_wakeup()`을 사용한다.
 - 규칙 3: 삽입 이후에도 `sleep_list` head가 최소 `wakeup_tick`을 유지해야 한다.
 
 ### 4.3 `timer_interrupt()`의 head 소비 전제 구현 주석
 - 위치: `pintos/devices/timer.c`
+- 역할: `sleep_list` head를 기준으로 wake 판단 시작점을 고정한다.
 - 규칙 1: wake 판단은 `sleep_list` head부터 시작한다.
 - 규칙 2: head가 아직 깰 시점이 아니면 이후 원소도 검사하지 않는다.
 

@@ -48,6 +48,7 @@ sequenceDiagram
 
 ### 4.1 `timer_interrupt()` 구현 주석
 - 위치: `pintos/devices/timer.c`
+- 역할: 깨어날 시점이 된 스레드를 반복적으로 `READY` 상태로 복귀시킨다.
 - 규칙 1: 인터럽트마다 전역 tick을 정확히 1 증가시킨다.
 - 규칙 2: tick 증가 직후 `thread_tick()`을 호출해 스케줄러 tick을 동기화한다.
 - 규칙 3: `sleep_list`의 head를 기준으로 wake 조건(`wakeup_tick <= 현재 tick`)을 검사한다.
@@ -56,6 +57,7 @@ sequenceDiagram
 
 ### 4.2 `thread_unblock()` 연계 주석
 - 위치: `pintos/threads/thread.c`
+- 역할: interrupt 경로에서 전달된 sleep 스레드를 실행 가능 상태(`READY`)로 전이한다.
 - 규칙 1: `timer_interrupt()`가 전달한 스레드는 `READY` 상태로 전이되어야 한다.
 - 규칙 2: unblock은 실행 보장이 아니라 실행 가능 상태 전이임을 전제로 한다.
 

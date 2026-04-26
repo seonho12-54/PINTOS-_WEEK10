@@ -40,21 +40,25 @@ flowchart LR
 ## 4. 구현 주석 (패턴별 수정 함수)
 ### 4.1 F1: 입력 계약 누락
 - 위치: `pintos/devices/timer.c` (`timer_sleep`)
+- 역할: 잘못된 입력(`ticks <= 0`)을 정상 sleep 경로에서 즉시 차단한다.
 - 규칙 1: `ticks <= 0` 입력은 즉시 반환한다.
 - 규칙 2: 이 경로에서 `sleep_list` 등록/`thread_block`을 수행하지 않는다.
 
 ### 4.2 F2: 정렬 불변식 붕괴
 - 위치: `pintos/devices/timer.c` (`thread_compare_wakeup`, `timer_sleep`)
+- 역할: wakeup 순서가 깨지지 않도록 `sleep_list` 정렬 불변식을 유지한다.
 - 규칙 1: 비교 기준은 `wakeup_tick`으로 고정한다.
 - 규칙 2: 삽입 후에도 head가 최소 tick이어야 한다.
 
 ### 4.3 F3/F4: wake 루프 불완전
 - 위치: `pintos/devices/timer.c` (`timer_interrupt`)
+- 역할: 깨울 대상 누락 없이 연속 구간 전체를 안전하게 처리한다.
 - 규칙 1: 조건 만족 대상을 1개가 아닌 연속 구간 전체 처리한다.
 - 규칙 2: pop 후 unblock 순서를 일관되게 유지한다.
 
 ### 4.4 F5: 책임 경계 위반
 - 위치: `pintos/devices/timer.c`, `pintos/threads/thread.c`
+- 역할: Alarm 로직이 scheduler 책임을 침범하지 않도록 경계를 고정한다.
 - 규칙 1: Alarm은 wake 판단 + unblock까지만 담당한다.
 - 규칙 2: 실행 순서 결정은 scheduler에 위임한다.
 
