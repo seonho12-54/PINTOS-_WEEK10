@@ -205,7 +205,7 @@ lock_acquire (struct lock *lock) {
 			list_push_back(&owner->donation_candidates, &current->donation_elem);
 			current->in_donation_list = true;
 		}
-		int depth = 0;//중복 등록 방지 최대 깊이 8
+		int depth = 0;// donation 체인 전파 최대 깊이 제한(8)
 		while(owner != NULL && owner->wait_on_lock != NULL && depth < 8){
 			// owner보다 높은 대기자가 들어오면 owner effective priority를 갱신한다.
 			if(current->effective_priority > owner->effective_priority){
@@ -265,6 +265,15 @@ lock_release (struct lock *lock) {
 
 	lock->holder = NULL;
 	sema_up (&lock->semaphore);// lock을 해제한다.
+	
+	// 현재 lock 기여분만 제거한 뒤 thread_recalculate_priority()를 호출한다.
+	
+	// 남은 donation이 없으면 base priority로 복원한다.
+
+	// donation_candidates를 순회하면서 donor->wait_on_lock == releasing_lock인 donor만 제거한다.
+
+	//donor 제거 시 in_donation_list = false를 함께 갱신한다.
+
 	//donation 정리 후 priority 재계산
 	thread_recalculate_priority(thread_current());
 }
