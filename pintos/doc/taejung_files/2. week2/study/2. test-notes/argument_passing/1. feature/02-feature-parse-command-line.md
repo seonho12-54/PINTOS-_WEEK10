@@ -22,11 +22,11 @@
 ## 3. 시퀀스와 단계별 흐름
 ```mermaid
 flowchart TD
-  A[cmd_line 복사] --> B{토큰 존재?}
-  B -- no --> F[실패 반환]
-  B -- yes --> C[첫 토큰 = 파일명]
-  C --> D[나머지 토큰 argv_temp에 저장]
-  D --> E[argc 확정]
+  copy_buf[cmd_line을 쓰기 가능한 버퍼로 복사] --> has_token{첫 토큰이 있는가?}
+  has_token -- 아니오 --> fail_return[실행 실패 반환]
+  has_token -- 예 --> set_progname[첫 토큰을 실행 파일명으로 확정]
+  set_progname --> save_args[나머지 토큰을 argv_temp에 순서대로 저장]
+  save_args --> finalize_argc[argc 확정 후 다음 단계로 전달]
 ```
 
 1. 원본 `cmd_line`을 쓰기 가능한 커널 버퍼로 복사한다.
