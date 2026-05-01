@@ -27,6 +27,8 @@ static bool load (const char *file_name, struct intr_frame *if_);
 static void initd (void *f_name);
 static void __do_fork (void *);
 
+static void argument_stack (char **argv, int argc, struct intr_frame *if_);
+
 /* General process initializer for initd and other process. */
 static void
 process_init (void) {
@@ -161,9 +163,48 @@ error:
 /* Switch the current execution context to the f_name.
  * Returns -1 on fail. */
 int
-process_exec (void *f_name) {
-	char *file_name = f_name;
+process_exec (void *f_name) { //여기서 토근화 구현합니다.
+	
+	//cmd line을 받아 그리고 토큰화하여 file_name과 argument들을 분리합니다.
+
+	char *cmd_line = f_name;        // 원본 명령어 전체: "echo hello world"
+	char *file_name;                // 실행 파일 이름만 저장할 변수: "echo"
+	char *argv[64];                 // 토큰 저장 배열
+	int argc = 0;                   // 토큰 개수
+	char *token, *save_ptr;         // strtok_r용 변수
 	bool success;
+
+
+
+	/* cmd_line이 NULL이면 실행 불가 */
+	if (cmd_line == NULL)
+		return -1;
+
+/* 공백 기준으로 명령어를 자른다.
+   예: "echo hello world" -> "echo", "hello", "world" */
+	for (token = strtok_r (cmd_line, " ", &save_ptr);
+	 token != NULL;
+	 token = strtok_r (NULL, " ", &save_ptr)) {
+
+	/* 인자가 너무 많으면 실패 */
+	if (argc >= 64) {
+		palloc_free_page (cmd_line);
+		return -1;
+	}
+
+	/* 자른 토큰을 argv에 순서대로 저장 */
+	argv[argc++] = token;
+}
+	/* 빈 문자열이거나 공백만 있으면 실행할 파일명이 없음 */
+	if (argc == 0) {
+		palloc_free_page (cmd_line);
+		return -1;
+	}
+
+	/* 첫 번째 토큰은 실행 파일 이름 */
+	file_name = argv[0];
+
+
 
 	/* We cannot use the intr_frame in the thread structure.
 	 * This is because when current thread rescheduled,
@@ -179,8 +220,14 @@ process_exec (void *f_name) {
 	/* And then load the binary */
 	success = load (file_name, &_if);
 
+	/* load 성공 후, cmd_line을 free 하기 전에 argv/argc를 유저 스택에 올린다. */
+	if (success)
+		argument_stack (argv, argc, &_if);
+
+
+
 	/* If load failed, quit. */
-	palloc_free_page (file_name);
+	palloc_free_page (cmd_line);
 	if (!success)
 		return -1;
 
@@ -328,7 +375,7 @@ load (const char *file_name, struct intr_frame *if_) {
 	off_t file_ofs;
 	bool success = false;
 	int i;
-
+	//실행파일 이름만 가져오는거임 echo hello world -> echo만 가져오는거임
 	/* Allocate and activate page directory. */
 	t->pml4 = pml4_create ();
 	if (t->pml4 == NULL)
@@ -534,11 +581,58 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 	return true;
 }
 
+
+static void argument_stack (char **argv, int argc, struct intr_frame *if_) {
+
+	char *arg_addresses[64]; // 인자들의 주소를 저장할 배열
+		/* 
+	 * 스택은 높은 주소에서 낮은 주소로 자란다.
+	 * 그래서 마지막 인자부터 거꾸로 넣는다.
+	 *
+	 * 예: argv = ["echo", "hello", "world"]
+	 * 넣는 순서: "world" -> "hello" -> "echo"
+	 */
+
+	for (int i = argc - 1; i >= 0; i--) {
+		size_t arg_len = strlen (argv[i]) + 1; // +1 for null terminator
+		if_->rsp -= arg_len; // 스택 포인터를 이동
+		memcpy ((void *) if_->rsp, argv[i], arg_len); // 인자를 스택에 복사
+		arg_addresses[i] = (char *) if_->rsp; // 인자의 주소 저장
+	}
+
+
+	while (if_->rsp % 8 != 0){
+		if_->rsp--; // 스택 포인터를 8의 배수로 정렬
+		*((uint8_t *) if_->rsp) = 0; // 패딩 바이트를 0으로 채움
+	}
+
+	if_->rsp -= 8; // argv[argc] = NULL을 위한 공간
+	*((char **) if_->rsp) = NULL; // argv[argc] = NULL
+
+	for (int i = argc - 1; i >= 0; i--) {
+		if_->rsp -= 8; // argv[i]의 주소를 위한 공간
+		*((char **) if_->rsp) = arg_addresses[i]; // argv[i]의 주소 저장
+	}
+
+	char **argv_start = (char **) if_->rsp; // argv 배열의 시작 주소
+
+	if_->rsp -= 8; // argc를 위한 공간
+	*(void **) if_->rsp =0;
+
+	if_->R.rdi = argc; // 첫 번째 인자: argc
+	if_->R.rsi = (uint64_t) argv_start; // 두 번째 인자: argv
+}
+
 /* Create a minimal stack by mapping a zeroed page at the USER_STACK */
 static bool
 setup_stack (struct intr_frame *if_) {
+
 	uint8_t *kpage;
+
 	bool success = false;
+	//나중에 argv argc를 유저ㅗ스택에 넣는곳입니다.
+
+
 
 	kpage = palloc_get_page (PAL_USER | PAL_ZERO);
 	if (kpage != NULL) {
