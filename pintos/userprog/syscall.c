@@ -6,10 +6,15 @@
 #include "threads/loader.h"
 #include "userprog/gdt.h"
 #include "threads/flags.h"
+#include "lib/kernel/console.h"
 #include "intrinsic.h"
-
+#include "lib/kernel/stdio.h"
+#include <string.h>
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
+
+// 시스템콜 함수 
+static int sys_write(int fd, const void *buffer, unsigned size); 
 
 /* System call.
  *
@@ -37,10 +42,35 @@ syscall_init (void) {
 			FLAG_IF | FLAG_TF | FLAG_DF | FLAG_IOPL | FLAG_AC | FLAG_NT);
 }
 
+static int sys_write(int fd, const void *buffer, unsigned size) {
+	if (fd == 1) {
+		putbuf(buffer, size);
+		return size;  
+	}
+	return 0; 
+}
+
+static void
+sys_exit(int status) {
+    printf("%s: exit(%d)\n", thread_current()->name, status);
+    thread_exit();
+}
+
 /* The main system call interface */
 void
 syscall_handler (struct intr_frame *f UNUSED) {
 	// TODO: Your implementation goes here.
-	printf ("system call!\n");
-	thread_exit ();
+	
+	// 10번이 SYS_WRITE
+	int sys_call = f->R.rax; 
+	
+	switch (sys_call) {
+		case SYS_WRITE: 
+			f->R.rax = sys_write(f->R.rdi, f->R.rsi, f->R.rdx);	
+			break; 			
+		case SYS_EXIT:
+			sys_exit(f->R.rdi);				
+	}
+
+
 }

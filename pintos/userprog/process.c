@@ -54,7 +54,6 @@ static void arg_stack(char **argv, int argc, struct intr_frame *if_) {
 	char *user_stack_addr[MAX_ARGS]; 
 	void *fake_address = 0; 
 
-	
 	// 2. argv 문자열들을 뒤에서부터 user stack에 복사한다
 	for (int i = argc-1; i >= 0; i--) {
 		int len = strlen(argv[i]) + 1; 		
@@ -83,7 +82,7 @@ static void arg_stack(char **argv, int argc, struct intr_frame *if_) {
 	} 
 	if_->R.rdi = argc; 
 	if_->R.rsi = (uint64_t) if_->rsp;
-
+	
 	// fake return address 
 	if_->rsp -= 8;	
 	memcpy(if_->rsp, &fake_address, 8); 
@@ -108,13 +107,24 @@ process_create_initd (const char *file_name) {
 	/* Make a copy of FILE_NAME.
 	 * Otherwise there's a race between the caller and load(). */
 	fn_copy = palloc_get_page (0);
-	if (fn_copy == NULL)
+	if (fn_copy == NULL) {
 		return TID_ERROR;
+	}
 	strlcpy (fn_copy, file_name, PGSIZE);
 
+    // char *token = strtok_r(file_name, " ", &save_ptr);
 	/* Create a new thread to execute FILE_NAME. */
+	char *prog_copy; 
+	prog_copy = palloc_get_page (0); 
 
-	tid = thread_create (file_name, PRI_DEFAULT, initd, fn_copy);
+	if (prog_copy == NULL) {
+		return TID_ERROR; 
+	}
+	strlcpy(prog_copy, file_name, PGSIZE); 
+	prog_copy = strtok_r(prog_copy, " ", &file_name); 
+
+	tid = thread_create (prog_copy, PRI_DEFAULT, initd, fn_copy);
+	palloc_free_page(prog_copy); 
 
 	if (tid == TID_ERROR)
 		palloc_free_page (fn_copy);
@@ -286,7 +296,7 @@ process_wait (tid_t child_tid UNUSED) {
     for (int i = 0; i < 1000; i++) {
         thread_yield();
     }
-    // return -1;
+    return -1;
 }
 
 /* Exit the process. This function is called by thread_exit (). */

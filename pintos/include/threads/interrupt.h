@@ -17,21 +17,21 @@ enum intr_level intr_disable (void);
 
 /* Interrupt stack frame. */
 struct gp_registers {
-	uint64_t r15;
-	uint64_t r14;
-	uint64_t r13;
-	uint64_t r12;
-	uint64_t r11;
-	uint64_t r10;
-	uint64_t r9;
-	uint64_t r8;
-	uint64_t rsi;
-	uint64_t rdi;
-	uint64_t rbp;
-	uint64_t rdx;
-	uint64_t rcx;
-	uint64_t rbx;
-	uint64_t rax;
+	uint64_t r15; // 여분으로 쓰는 저장 공간
+	uint64_t r14; // 여분으로 쓰는 저장 공간
+	uint64_t r13; // 여분으로 쓰는 저장 공간
+	uint64_t r12; // 여분으로 쓰는 저장 공간
+	uint64_t r11; // syscall 할 때 잠깐 쓰이는 저장 공간
+	uint64_t r10; // syscall의 4번째 인자
+	uint64_t r9;  // syscall의 6번째 인자
+	uint64_t r8;  // syscall의 5번째 인자
+	uint64_t rsi; // syscall의 2번째 인자
+	uint64_t rdi; // syscall의 1번째 인자
+	uint64_t rbp; // 현재 함수의 기준 위치
+	uint64_t rdx; // syscall의 3번째 인자
+	uint64_t rcx; // syscall 할 때 잠깐 쓰이는 저장 공간
+	uint64_t rbx; // 여분으로 쓰는 저장 공간
+	uint64_t rax; // syscall 번호 또는 반환값
 } __attribute__((packed));
 
 struct intr_frame {
