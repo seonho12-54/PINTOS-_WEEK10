@@ -1,0 +1,20 @@
+# Clangd configuration for Pintos (matches CPPFLAGS from Make.config + Makefile.build).
+# Workspace root should be this directory (`pintos/`) so includes resolve like the kernel build.
+#
+# Note: Real `make` uses OS-specific gcc flags (e.g. -mno-sse); those are omitted here so
+# host clang/clangd can parse sources on macOS/ARM for IDE diagnostics only.
+
+CompileFlags:
+  Add:
+    - --target=x86_64-unknown-linux-gnu
+    - -std=gnu11
+    - -nostdinc
+    - -I.
+    - -Iinclude/lib
+    - -Iinclude
+    - -Iinclude/lib/kernel
+    - -Ilib/kernel
+    - -DUSERPROG
+    - -DFILESYS
+    - -Wno-unknown-warning-option
+    - -Wno-unused-command-line-argument

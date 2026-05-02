@@ -8,6 +8,7 @@
 
 ## 공통 템플릿/생성 규칙
 - 템플릿 위치: `../1. note-templates`
+- 통합 템플릿 위치: `../../0. references/templates/test-notes`
 - 트랙별 생성 가이드:
   - `1. Alarm-Clock/00-template-and-generation-guide.md`
   - `1. Priority-Scheduling/00-template-and-generation-guide.md`

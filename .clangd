@@ -1,0 +1,17 @@
+# Use when the workspace root is `PINTOS-_WEEK10` (not `pintos/`).
+# Paths are relative to this directory.
+
+CompileFlags:
+  Add:
+    - --target=x86_64-unknown-linux-gnu
+    - -std=gnu11
+    - -nostdinc
+    - -Ipintos
+    - -Ipintos/include/lib
+    - -Ipintos/include
+    - -Ipintos/include/lib/kernel
+    - -Ipintos/lib/kernel
+    - -DUSERPROG
+    - -DFILESYS
+    - -Wno-unknown-warning-option
+    - -Wno-unused-command-line-argument
