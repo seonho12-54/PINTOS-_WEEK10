@@ -378,7 +378,6 @@ process_exec (void *f_name) {
 	/* We first kill the current context */
 	process_cleanup ();
 	
-	char *args[ARG_MAX]; 
 	// TODO: Argument 분리해서 파일명만 load()로 넘기기 
 
 	// 기능 2: 사용자 스택 레이아웃 구성 부분 시작 (ABI 계약)
