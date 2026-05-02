@@ -616,8 +616,8 @@ static void argument_stack (char **argv, int argc, struct intr_frame *if_) {
 
 	char **argv_start = (char **) if_->rsp; // argv 배열의 시작 주소
 
-	if_->rsp -= 8; // argc를 위한 공간
-	*(void **) if_->rsp =0;
+	if_->rsp -= 8; // fake return address를 위한 공간
+	*(void **) if_->rsp =0; // fake return address (프로그램이 종료될 때 리턴할 주소, 실제로는 사용되지 않음)
 
 	if_->R.rdi = argc; // 첫 번째 인자: argc
 	if_->R.rsi = (uint64_t) argv_start; // 두 번째 인자: argv
@@ -634,7 +634,7 @@ setup_stack (struct intr_frame *if_) {
 
 
 
-	kpage = palloc_get_page (PAL_USER | PAL_ZERO);
+	kpage = palloc_get_page (PAL_USER | PAL_ZERO); //4바이트 짜리 가져오고 안을 0으로 초기화해라
 	if (kpage != NULL) {
 		success = install_page (((uint8_t *) USER_STACK) - PGSIZE, kpage, true);
 		if (success)
