@@ -29,65 +29,7 @@ static bool load (const char *file_name, struct intr_frame *if_);
 static void initd (void *f_name);
 static void __do_fork (void *);
 
-// 헬퍼 함수 (arg_parsing, arg_stack)
-static int
-arg_parsing(char *file_name, char **argv)
-{
-    char *save_ptr;
-    char *token = strtok_r(file_name, " ", &save_ptr);
-    int argc = 0;
 
-    while (token != NULL) {
-        argv[argc] = token;
-        argc++;
-	
-        token = strtok_r(NULL, " ", &save_ptr);
-    }
-
-    argv[argc] = NULL;
-
-	return argc; 
-}
-
-static void arg_stack(char **argv, int argc, struct intr_frame *if_) {	
-	// 1. 문자열이 실제로 복사된 user stack 주소를 저장할 배열을 만든다 
-	char *user_stack_addr[MAX_ARGS]; 
-	void *fake_address = 0; 
-
-	
-	// 2. argv 문자열들을 뒤에서부터 user stack에 복사한다
-	for (int i = argc-1; i >= 0; i--) {
-		int len = strlen(argv[i]) + 1; 		
-		if (len % 8 != 0) {
-			int modular = len % 8; 
-			
-			if_->rsp -= len + (8 - modular); 
-			user_stack_addr[i] = if_->rsp; 		
-						
-			memcpy(if_->rsp, argv[i], len);		 		 
-			memset(if_->rsp + len, 0, 8 - modular); 	
-		} else {		
-			if_->rsp -= len; 
-			user_stack_addr[i] = if_->rsp; 					
-			memcpy(if_->rsp, argv[i], len);		 		 
-		}
-	}
-
-	argv[argc] = NULL; 
-	if_->rsp -= 8; 
-	memcpy(if_->rsp, &argv[argc], 8);
-	
-	for (int i = argc-1; i >= 0; i--) {
-		if_->rsp -= 8; 
-		memcpy(if_->rsp, &user_stack_addr[i], 8); 
-	} 
-	if_->R.rdi = argc; 
-	if_->R.rsi = (uint64_t) if_->rsp;
-
-	// fake return address 
-	if_->rsp -= 8;	
-	memcpy(if_->rsp, &fake_address, 8); 
-}
 /* General process initializer for initd and other process. */
 static void
 process_init (void) {
@@ -223,6 +165,64 @@ error:
 	thread_exit ();
 }
 
+// 헬퍼 함수 (arg_parsing, arg_stack)
+static int
+arg_parsing(char *file_name, char **argv)
+{
+    char *save_ptr;
+    char *token = strtok_r(file_name, " ", &save_ptr);
+    int argc = 0;
+
+    while (token != NULL) {
+        argv[argc] = token;
+        argc++;
+	
+        token = strtok_r(NULL, " ", &save_ptr);
+    }
+
+    argv[argc] = NULL;
+
+	return argc; 
+}
+
+static void arg_stack(char **argv, int argc, struct intr_frame *if_) {	
+	// 1. 문자열이 실제로 복사된 user stack 주소를 저장할 배열을 만든다 
+	char *user_stack_addr[MAX_ARGS]; 
+	void *fake_address = 0; 
+
+	
+	// 2. argv 문자열들을 뒤에서부터 user stack에 복사한다
+	for (int i = argc - 1; i >= 0; i--) {
+		int len = strlen(argv[i]) + 1;
+
+		if_->rsp -= len;
+		memcpy((void *) if_->rsp, argv[i], len);
+
+		user_stack_addr[i] = (char *) if_->rsp;
+	}
+
+	// 문자열 복사가 다 끝난 뒤 한 번만 정렬
+	while (if_->rsp % 8 != 0) {
+		if_->rsp--;
+		*(uint8_t *) if_->rsp = 0;
+	}
+
+	argv[argc] = NULL; 
+	if_->rsp -= 8; 
+	memcpy((void *)if_->rsp, &argv[argc], 8);
+	
+	for (int i = argc-1; i >= 0; i--) {
+		if_->rsp -= 8; 
+		memcpy((void *)if_->rsp, &user_stack_addr[i], 8); 
+	} 
+	if_->R.rdi = argc; 
+	if_->R.rsi = (uint64_t) if_->rsp;
+
+	// fake return address 
+	if_->rsp -= 8;	
+	memcpy((void *)if_->rsp, &fake_address, 8); 
+}
+
 
 /* Switch the current execution context to the f_name.
  * Returns -1 on fail. */
@@ -251,11 +251,12 @@ process_exec (void *f_name) {
 	success = load(argv[0], &_if);
 	
 	/* If load failed, quit. */
-	palloc_free_page (file_name);
+
 	if (success) {
 		arg_stack(argv, argc, &_if); 
 	}
-	else {
+	palloc_free_page (file_name);
+	if (!success) {
 		return -1;
 	}
 	
@@ -281,10 +282,9 @@ process_wait (tid_t child_tid UNUSED) {
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
-    for (int i = 0; i < 1000; i++) {
-        thread_yield();
-    }
-    // return -1;
+	for (int i = 0; i < 10000; i++)
+		thread_yield ();
+	return -1;
 }
 
 /* Exit the process. This function is called by thread_exit (). */
