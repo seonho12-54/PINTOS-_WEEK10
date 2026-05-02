@@ -16,6 +16,7 @@
 - `../1. feature/02-feature-user-pointer-validation.md`
 - `../1. feature/03-feature-safe-copy-in-out.md`
 - `../1. feature/04-feature-page-fault-and-process-kill.md`
+- `../1. feature/05-feature-user-memory-helper-contract.md`
 
 ## 우선 점검 순서
 
@@ -23,3 +24,8 @@
 2. syscall 인자 읽기 전 사용자 주소 검증이 일어나는지 확인한다.
 3. 문자열/버퍼가 page boundary를 넘어갈 때 전체 범위가 검증되는지 확인한다.
 4. 실패 경로에서 파일 락이나 임시 자원이 남지 않는지 확인한다.
+
+## 분업 기준
+
+System Calls 담당자와 함께 작업할 때는 `../../01-team-split-system-call-user-memory.md`의 User Memory Access 계약을 먼저 확정한다.  
+`*-bad-ptr`, `*-boundary`, `bad-read/write/jump`는 syscall별 임시 처리 대신 공용 user memory helper를 통해 해결한다.

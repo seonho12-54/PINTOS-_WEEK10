@@ -23,6 +23,9 @@
 `*-bad-ptr`, `*-boundary`, `bad-read/write/jump`는 User Memory Access 트랙에서 주로 검증합니다.  
 System Calls 테스트 문서는 검증된 인자를 받은 뒤의 syscall 정책, fd table, 반환값, 동기화에 집중합니다.
 
+4인 병렬 개발 시에는 `../../01-team-split-system-call-user-memory.md`의 분업 기준을 따른다.  
+System Calls 담당자는 사용자 포인터를 직접 역참조하지 않고 User Memory Access helper 계약을 사용한다.
+
 ## 우선 점검 순서
 
 1. `halt`, `exit`로 syscall 진입과 반환/종료 경로를 확인한다.
