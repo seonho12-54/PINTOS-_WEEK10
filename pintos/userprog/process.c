@@ -38,18 +38,138 @@ process_init (void) {
 // 최대 인자 길이 정의
 #define MAX_ARG_LENGTH 128
 
-static bool build_user_stack_args(struct intr_frame *user_if, int argc, char **argv){
-	uintptr_t sp;
-	char *str_u[ARG_MAX];
-	int i;
-
-	if (argc <= 0 || argc > ARG_MAX || argv == NULL || user_if == NULL)
+bool parse_command_line_args(char *cmd_line, int *argc, char **argv){
+	// strtok_r() 첫 호출로 시작 토큰을 가져온다.
+	char *save_ptr = NULL;
+	char *token = strtok_r(cmd_line, " ", &save_ptr);
+	*argc = 0;
+	if (token == NULL){
 		return false;
+	}
+	// 	토큰을 argv_temp[argc]에 저장한 뒤 argc를 증가시킨다.
+	if(*argc >= ARG_MAX){
+		return false;
+	}
+	argv[*argc] = token;
+	(*argc)++;
 
-	sp = (uintptr_t) user_if->rsp;
+	// 매 반복마다 최대 토큰 수/길이 경계를 검사한다.
+	while(token != NULL){
+		token = strtok_r(NULL, " ", &save_ptr);
+		if (token == NULL){
+			break;
+		}
+		if(*argc >= ARG_MAX){
+			return false;
+		}
+		argv[*argc] = token;
+		(*argc)++;
+	}
 
+	return true;
 }
 
+bool finalize_parsed_args(int argc, char **argv){
+	// 첫 토큰(실행 파일명) 존재 여부를 최종 확인한다.
+	if(argv == NULL){
+		return false;
+	}
+	
+	if(argc <= 0 || argv[0] == NULL){
+		return false;
+	}
+
+	return true;
+}
+
+
+static bool build_user_stack_args(struct intr_frame *user_if, int argc, char **argv, uintptr_t *argv_user_addr){
+	uintptr_t sp;
+	char *arg_addrs[ARG_MAX];
+	int i;
+	// 입력 검증
+	if (argc <= 0 || argc > ARG_MAX || argv == NULL || user_if == NULL || argv_user_addr == NULL)
+		return false;
+	// 문자열을 역순으로 push하고 시작 주소를 arg_addrs[]에 기록한다.
+	sp = (uintptr_t) user_if->rsp;
+	
+	for(i = argc - 1; i >= 0; i--){
+		size_t len = strlen(argv[i]) + 1;
+		sp -= len;
+
+		if(sp < USER_STACK - PGSIZE){
+			return false;
+		}
+
+		memcpy((void *) sp, argv[i], len);
+		arg_addrs[i] = (char *) sp;
+	}
+	// 8바이트 정렬을 맞춘 뒤 NULL 센티널을 push한다.
+	sp &= ~0x7;
+
+	if(sp < USER_STACK - PGSIZE){
+		return false;
+	}
+	
+	sp -= sizeof(char *);
+	
+	if(sp < USER_STACK - PGSIZE){
+		return false;
+	}
+
+	*(char **) sp = NULL;
+	
+	// arg_addrs[]를 역순 순회해 argv 포인터들을 push한다.
+	for(i = argc - 1; i >= 0; i--){
+		sp -= sizeof(char *);
+
+		if(sp < USER_STACK - PGSIZE){
+			return false;
+		}
+
+		*(char **) sp = arg_addrs[i];
+	}
+	
+	// 마지막에 fake return address(0)를 push해 프레임을 마무리한다.
+	*argv_user_addr = sp;
+
+	sp -= sizeof(char *);
+
+	if(sp < USER_STACK - PGSIZE){
+		return false;
+	}
+
+	*(void **) sp = NULL;
+
+	user_if->rsp = sp;
+	return true;
+}
+
+bool set_user_entry_registers(struct intr_frame *user_if, int argc, uintptr_t argv_user_addr){
+	// 입력 검증하기
+	if(user_if == NULL || argc <= 0 || argv_user_addr == 0)
+		return false;
+	//argv_user_addr가 사용자 가상 주소인지 점검한다.
+	if(!is_user_vaddr((void *) argv_user_addr)){
+		return false;
+	}
+	// if_.R.rdi = argc를 먼저 설정한다.
+	user_if->R.rdi = argc;
+	// if_.R.rsi = argv_user_addr를 설정한다.
+	user_if->R.rsi = argv_user_addr;
+	return true;
+}
+
+bool validate_user_entry_frame(struct intr_frame *user_if){
+	// 입력 검증하기
+	if(user_if == NULL)
+		return false;
+	// RSP가 사용자 스택 영역인지 확인한다.
+	if(!is_user_vaddr((void *) user_if->rsp)){
+		return false;
+	}
+	return true;
+}
 
 /* Starts the first userland program, called "initd", loaded from FILE_NAME.
  * The new thread may be scheduled (and may even exit)
@@ -192,12 +312,14 @@ process_exec (void *f_name) {
 	}
 	
 	// 길이가 너무 길지 않은지 확인한다. 
-	if(strnlen(file_name, PGSIZE) > MAX_ARG_LENGTH){
+	if(strnlen(file_name, PGSIZE) == PGSIZE){
+		palloc_free_page (file_name);
 		return -1;
 	}
 
 	// 공백만 있는 입력인지 확인한다.
 	if(strspn(file_name, " ") == strlen(file_name)){
+		palloc_free_page (file_name);
 		return -1;
 	}
 	
@@ -214,8 +336,9 @@ process_exec (void *f_name) {
 	// parse_command_line_args() 토큰화 루프
 	int argc = 0;
 	char *argv[ARG_MAX];
-	success = parse_command_line_args(cmd_line, argc, argv);
+	success = parse_command_line_args(cmd_line, &argc, argv);
 	if (!success){
+		palloc_free_page (file_name);
 		palloc_free_page (cmd_line);
 		return -1;
 	}
@@ -223,6 +346,7 @@ process_exec (void *f_name) {
 	// finalize_parsed_args() 파싱 결과 반환
 	success = finalize_parsed_args(argc, argv);
 	if (!success){
+		palloc_free_page (file_name);
 		palloc_free_page (cmd_line);
 		return -1;
 	}
@@ -239,44 +363,42 @@ process_exec (void *f_name) {
 	process_cleanup ();
 
 	// 기능 2: 사용자 스택 레이아웃 구성 부분 시작 (ABI 계약)
-		
+	uintptr_t argv_user_addr = 0;
 	// load() 기본 매핑
-	// load() 안에서 setup_stack() 호출
-	success = load(file_name, &_if);
+	success = load(argv[0], &_if);
 	if (!success){
 		palloc_free_page (file_name);
-		return -1;
-	}
-
-	// 실패 시 자원 정리 후 -1 반환
-	if (!success)
-	{
-		palloc_free_page (file_name);
+		palloc_free_page (cmd_line);
 		return -1;
 	}
 	else{
 		// build_user_stack_args() 인자 배치 루프
-		success = build_user_stack_args(&_if, argc, argv);
+		success = build_user_stack_args(&_if, argc, argv, &argv_user_addr);
 		if (!success){
 			palloc_free_page (file_name);
+			palloc_free_page (cmd_line);
 			return -1;
 		}
 	}
 
 	// 기능 3: 레지스터 설정과 유저 진입 경계
 	// set_user_entry_registers() intr_frame 인자 필드
-	success = set_user_entry_registers(&_if, argc, argv);
+	success = set_user_entry_registers(&_if, argc, argv_user_addr);
 	if (!success){
 		palloc_free_page (file_name);
+		palloc_free_page (cmd_line);
 		return -1;
 	}
 	// validate_user_entry_frame() 유저 전환 직전 점검
 	success = validate_user_entry_frame(&_if);
 	if (!success){
 		palloc_free_page (file_name);
+		palloc_free_page (cmd_line);
 		return -1;
 	}
 	// do_iret() 유저 진입
+	palloc_free_page (file_name);
+	palloc_free_page (cmd_line);
 	do_iret (&_if);
 	NOT_REACHED ();
 }
