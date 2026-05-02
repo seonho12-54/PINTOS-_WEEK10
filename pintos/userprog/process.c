@@ -28,7 +28,8 @@ static void process_cleanup (void);
 static bool load (const char *file_name, struct intr_frame *if_);
 static void initd (void *f_name);
 static void __do_fork (void *);
-
+static int arg_parsing (char *file_name, char **argv);
+static void arg_stack (char **argv, int argc, struct intr_frame *if_);
 
 /* General process initializer for initd and other process. */
 static void
@@ -45,6 +46,8 @@ process_init (void) {
 tid_t
 process_create_initd (const char *file_name) {
 	char *fn_copy; // file_name 문자열을 복사해서 담아두는 별도의 메모리 페이지 
+	char *name_copy;
+	char *argv[MAX_ARGS];
 	tid_t tid; // 고유한 쓰레드 ID 
 	
 	/* Make a copy of FILE_NAME.
@@ -54,12 +57,22 @@ process_create_initd (const char *file_name) {
 		return TID_ERROR;
 	strlcpy (fn_copy, file_name, PGSIZE);
 
+	//스레드 이름용 복사본 생성후 토큰
+	name_copy = palloc_get_page(0);
+	if (name_copy == NULL){
+		palloc_free_page (name_copy);
+		return TID_ERROR;
+	}
+	strlcpy(name_copy, file_name, PGSIZE);
+	arg_parsing(name_copy, argv);
+
 	/* Create a new thread to execute FILE_NAME. */
 
-	tid = thread_create (file_name, PRI_DEFAULT, initd, fn_copy);
+	tid = thread_create (argv[0], PRI_DEFAULT, initd, fn_copy);
 
 	if (tid == TID_ERROR)
 		palloc_free_page (fn_copy);
+
 	return tid;
 }
 
