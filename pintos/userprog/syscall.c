@@ -10,7 +10,8 @@
 #include "intrinsic.h"
 #include "lib/kernel/stdio.h"
 #include <string.h>
-#include "threads/init.h"  // power_off 함수
+#include "threads/init.h" // power_off 함수
+#include "filesys/file.h" // file_write 함수 
 void syscall_entry(void);
 void syscall_handler(struct intr_frame *);
 
@@ -45,12 +46,24 @@ void syscall_init(void)
 
 static int sys_write(int fd, const void *buffer, unsigned size)
 {
+	//struct file * file;
 	if (fd == 1)
 	{
 		putbuf(buffer, size);
 		return size;
 	}
-	return 0;
+
+	// fd가 2이상일때, 현재 프로세스의 fd table에서 fd에 해당하는 struct file *를 찾음 find_file_from_fd()
+	// 없으면 return -1, 있으면 파일에 입력하는 함수 호출하고, 그 함수가 입력한 사이즈를 반환.
+	// fd에 해당하는 file* 찾는 함수 호출해서 파일 가져옴
+	// 있는지 없는지 검사
+	// 있다면 파일에 입력하는 함수 호출
+	// 함수가 반환하는 사이즈 그대로 반환
+	//file = find_file_from_fd(fd, )
+	// if (file == NULL)
+	// 	return -1;
+	
+	// return file_write(file, buffer, size);
 }
 
 static void
@@ -84,6 +97,9 @@ void syscall_handler(struct intr_frame *f UNUSED)
 		break;
 	case SYS_HALT:
 		sys_halt();
+		break;
+	default:
+		sys_exit(-1);
 		break;
 	}
 }
