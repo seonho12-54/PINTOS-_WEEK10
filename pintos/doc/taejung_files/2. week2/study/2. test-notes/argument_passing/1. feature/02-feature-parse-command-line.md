@@ -40,32 +40,65 @@ flowchart TD
 #### 개념 설명
 `strtok_r()`는 버퍼를 직접 수정하므로 원본 포인터를 바로 건드리면 위험합니다.
 
-#### 구현 주석
-- 위치: `pintos/userprog/process.c`
-- 역할: `cmd_line` 복사본 생성 및 수명 관리
-- 규칙 1: 복사 실패 시 즉시 실패 반환
-- 규칙 2: 성공/실패 경로 모두에서 복사 버퍼 해제
+#### 시퀀스 및 흐름
+```mermaid
+flowchart LR
+  IN[file_name 입력] --> CHECK[NULL/길이/공백 검사]
+  CHECK --> COPY[cmd_line 페이지 할당 및 복사]
+  COPY --> PARSE[parse_command_line_args 호출]
+```
+
+1. `file_name`이 NULL이거나 한 페이지를 넘으면 실패 처리한다.
+2. 공백만 있는 입력은 실행 파일명이 없으므로 실패 처리한다.
+3. `strtok_r()`가 수정할 수 있도록 `cmd_line` 복사 페이지를 만든다.
+4. 복사 성공 후에만 토큰화 함수로 넘긴다.
+
+#### 구현 주석 (보면 되는 함수)
+- 위치: `pintos/userprog/process.c`의 `process_exec()`
 
 ### 4.2 기능 B: 토큰화 규칙 고정
 #### 개념 설명
 이번 범위에서는 "공백은 구분자" 한 가지 규칙만 고정하면 충분합니다.
 
-#### 구현 주석
-- 위치: `pintos/userprog/process.c`의 토큰화 루프
-- 역할: 토큰 추출 및 `argv` 배열 저장
-- 규칙 1: 연속 공백은 빈 토큰 생성 없이 건너뜀
-- 규칙 2: 인자 순서 유지
-- 규칙 3: `ARG_MAX`를 넘는 토큰 수는 저장 전에 실패
+#### 시퀀스 및 흐름
+```mermaid
+flowchart TD
+  START[strtok_r 첫 호출] --> HAS{token 존재?}
+  HAS -- 아니오 --> FAIL[false 반환]
+  HAS -- 예 --> STORE[argv[argc] 저장 전 ARG_MAX 검사]
+  STORE --> NEXT[strtok_r 다음 호출 반복]
+  NEXT --> DONE{더 이상 token 없음?}
+  DONE -- 아니오 --> STORE
+  DONE -- 예 --> OK[true 반환]
+```
+
+1. 첫 토큰이 없으면 실행 파일명이 없는 입력으로 보고 실패한다.
+2. 토큰을 `argv[argc]`에 저장하기 전에 `ARG_MAX`를 검사한다.
+3. 저장한 뒤 `argc`를 증가시켜 토큰 순서를 그대로 유지한다.
+4. `strtok_r(NULL, " ", &save_ptr)`로 남은 토큰을 반복 추출한다.
+
+#### 구현 주석 (보면 되는 함수)
+- 위치: `pintos/userprog/process.c`의 `parse_command_line_args()`
 
 ### 4.3 기능 C: 파싱 결과의 다음 단계 계약
 #### 개념 설명
 파싱의 출력(`argc`, `argv[]`)은 스택 빌더가 그대로 쓴다는 전제를 유지해야 합니다.
 
-#### 구현 주석
-- 위치: `pintos/userprog/process.c`의 파싱 종료 구간
-- 역할: 스택 빌더 인자 전달 준비
-- 규칙 1: `argv[argc]`는 접근하지 않음(스택 단계에서 NULL 생성)
-- 규칙 2: 파일명 토큰(`argv[0]`)은 비어 있지 않음 보장
+#### 시퀀스 및 흐름
+```mermaid
+flowchart LR
+  PARSED[argc/argv 파싱 완료] --> VALIDATE[finalize_parsed_args]
+  VALIDATE --> LOAD[argv[0]로 load 호출]
+  LOAD --> STACK[argc/argv를 stack builder에 전달]
+```
+
+1. `argv` 포인터 자체가 NULL인지 먼저 확인한다.
+2. `argc <= 0`이거나 `argv[0] == NULL`이면 실패한다.
+3. 성공한 경우 `argv[0]`은 로드할 파일명으로 사용한다.
+4. `argv[argc]` NULL 센티널은 파싱 단계가 아니라 스택 단계에서 만든다.
+
+#### 구현 주석 (보면 되는 함수)
+- 위치: `pintos/userprog/process.c`의 `finalize_parsed_args()`
 
 ## 5. 구현 주석 (위치별 정리)
 ### 5.1 `process_exec()` 파싱 시작부

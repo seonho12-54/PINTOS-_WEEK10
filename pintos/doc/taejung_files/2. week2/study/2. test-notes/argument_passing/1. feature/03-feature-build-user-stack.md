@@ -42,29 +42,74 @@ sequenceDiagram
 
 ## 4. 기능별 가이드 (개념/흐름 + 구현 주석 위치)
 ### 4.1 기능 A: 문자열 블록 배치
-#### 구현 주석
+#### 개념 설명
+스택은 높은 주소에서 낮은 주소로 자라므로, 문자열을 뒤쪽 인자부터 복사해야 최종 `argv[0]`, `argv[1]` 순서를 자연스럽게 만들 수 있습니다.
+
+#### 시퀀스 및 흐름
+```mermaid
+flowchart TD
+  INIT[sp = user_if->rsp] --> LOOP[argc - 1부터 0까지 반복]
+  LOOP --> LEN[strlen(argv[i]) + 1 계산]
+  LEN --> DEC[sp를 len만큼 감소]
+  DEC --> BOUND[USER_STACK - PGSIZE 하한 검사]
+  BOUND --> COPY[문자열과 NUL 복사]
+  COPY --> SAVE[arg_addrs[i] = sp]
+```
+
+1. `setup_stack()`이 만든 초기 `rsp`에서 시작한다.
+2. 각 문자열 길이는 끝의 `\0`까지 포함해 계산한다.
+3. `sp`를 먼저 낮춘 뒤 페이지 하한을 넘지 않는지 확인한다.
+4. 문자열을 사용자 스택에 복사하고 시작 주소를 `arg_addrs[]`에 저장한다.
+
+#### 구현 주석 (보면 되는 함수)
 - 위치: `pintos/userprog/process.c`의 인자 스택 구성 루틴
-- 역할: 각 토큰 문자열을 사용자 스택으로 복사
-- 규칙 1: 문자열 끝 `\0` 포함 복사
-- 규칙 2: 복사 주소를 `arg_addrs[]`에 저장
-- 규칙 3: 각 push 후 사용자 영역 경계 검사
+- 위치: `pintos/userprog/process.c`의 `build_user_stack_args()`
 
 ### 4.2 기능 B: 포인터 블록 배치
-#### 구현 주석
+#### 개념 설명
+문자열만 복사해서는 `argv`가 완성되지 않습니다. 사용자 코드가 읽을 수 있는 포인터 배열을 사용자 스택 안에 만들어야 합니다.
+
+#### 시퀀스 및 흐름
+```mermaid
+sequenceDiagram
+  participant SB as stack_builder
+  participant US as USER_STACK
+  SB->>US: sp 8-byte 정렬
+  SB->>US: argv[argc] NULL push
+  loop argc - 1 downto 0
+    SB->>US: arg_addrs[i] push
+  end
+  SB->>SB: argv_user_addr = sp
+```
+
+1. 문자열 복사 후 `sp`를 8바이트 경계로 내린다.
+2. `argv[argc]` 역할을 하는 NULL 포인터를 먼저 push한다.
+3. `arg_addrs[]`를 역순으로 push해 최종 배열이 `argv[0]`부터 읽히게 한다.
+4. 포인터 push가 끝난 현재 `sp`를 `argv_user_addr`로 저장한다.
+
+#### 구현 주석 (보면 되는 함수)
 - 위치: `pintos/userprog/process.c`
-- 역할: `argv` 포인터 배열 생성
-- 규칙 1: `argv[argc] == NULL`을 먼저 보장
-- 규칙 2: 포인터는 문자열 주소 배열을 역순 순회해 push
-- 규칙 3: push 완료 후 `argv_user_addr`에 포인터 배열 시작 주소 저장
+- 위치: `pintos/userprog/process.c`의 `build_user_stack_args()`
 
 ### 4.3 기능 C: 정렬/프레임 마무리
-#### 구현 주석
-- 위치: `pintos/userprog/process.c`
-- 역할: ABI 정렬과 fake return address 처리
-- 규칙 1: 포인터 배열 전에 8바이트 정렬
-- 규칙 2: 마지막에 fake return address 0 push
-- 규칙 3: 각 push 전후로 스택 페이지 하한을 넘지 않는지 확인
-- 금지 1: 정렬 없이 바로 포인터 push
+#### 개념 설명
+유저 진입 시점의 스택은 ABI가 기대하는 정렬과 호출 프레임 모양을 만족해야 합니다. 포인터 배열 주소를 보존한 뒤 fake return address를 추가하고 최종 `rsp`를 반영합니다.
+
+#### 시퀀스 및 흐름
+```mermaid
+flowchart LR
+  AV[argv_user_addr 저장] --> FAKE[fake return address 0 push]
+  FAKE --> RSP[user_if->rsp = sp]
+  RSP --> DONE[스택 빌드 성공 반환]
+```
+
+1. 포인터 배열 시작 주소를 `*argv_user_addr`에 저장한다.
+2. fake return address로 0을 push한다.
+3. push 전마다 `USER_STACK - PGSIZE` 하한 검사를 수행한다.
+4. 최종 `sp`를 `user_if->rsp`에 저장하고 성공을 반환한다.
+
+#### 구현 주석 (보면 되는 함수)
+- 위치: `pintos/userprog/process.c`의 `build_user_stack_args()`
 
 ## 5. 구현 주석 (위치별 정리)
 ### 5.1 `setup_stack()` 기본 매핑

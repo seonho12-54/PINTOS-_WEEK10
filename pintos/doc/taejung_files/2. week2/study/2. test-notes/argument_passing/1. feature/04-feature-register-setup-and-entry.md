@@ -38,27 +38,72 @@ flowchart TD
 
 ## 4. 기능별 가이드 (개념/흐름 + 구현 주석 위치)
 ### 4.1 기능 A: 인자 레지스터 세팅
-#### 구현 주석
-- 위치: `pintos/userprog/process.c`의 로드 완료 후 구간
-- 역할: `_start` 호출 인자 레지스터 전달
-- 규칙 1: `RDI <- argc`
-- 규칙 2: `RSI <- argv_user_addr`
-- 금지 1: 포인터가 커널 주소인지 검증 없이 전달
+#### 개념 설명
+64비트 유저 프로그램 진입 규약에서는 첫 번째 인자 `argc`가 `RDI`, 두 번째 인자 `argv`가 `RSI`에 들어갑니다. 여기서 `argv`는 커널 배열 주소가 아니라 사용자 스택 안의 `argv_user_addr`여야 합니다.
+
+#### 시퀀스 및 흐름
+```mermaid
+flowchart LR
+  IN[argc, argv_user_addr 입력] --> CHECK[입력/사용자 주소 검사]
+  CHECK --> RDI[RDI = argc]
+  RDI --> RSI[RSI = argv_user_addr]
+```
+
+1. `user_if`, `argc`, `argv_user_addr`가 유효한지 확인한다.
+2. `argv_user_addr`가 사용자 가상 주소인지 검사한다.
+3. `user_if->R.rdi`에 `argc`를 쓴다.
+4. `user_if->R.rsi`에 `argv_user_addr`를 쓴다.
+
+#### 구현 주석 (보면 되는 함수)
+- 위치: `pintos/userprog/process.c`의 `set_user_entry_registers()`
 
 ### 4.2 기능 B: 진입 프레임 무결성 점검
-#### 구현 주석
-- 위치: `pintos/userprog/process.c`
-- 역할: 유저 진입 직전 프레임 상태 검증
-- 규칙 1: `RSP`는 사용자 영역 주소
-- 규칙 2: `RIP`는 `load()`가 세팅한 엔트리를 그대로 사용
-- 규칙 3: 실패 시 유저 진입하지 않고 에러 경로로 반환
+#### 개념 설명
+스택과 레지스터 세팅이 끝났더라도 유저 모드로 넘어가기 전 마지막으로 프레임의 사용자 주소 경계를 확인해야 합니다.
+
+#### 시퀀스 및 흐름
+```mermaid
+flowchart TD
+  FRAME[intr_frame 준비 완료] --> CHECK_RSP{rsp가 user vaddr인가?}
+  CHECK_RSP -- 아니오 --> FAIL[false 반환]
+  CHECK_RSP -- 예 --> OK[true 반환]
+```
+
+1. `intr_frame` 포인터가 NULL인지 확인한다.
+2. `user_if->rsp`가 사용자 가상 주소인지 확인한다.
+3. 실패하면 `do_iret()` 호출 전 에러 경로로 돌아간다.
+4. 성공하면 유저 진입 가능한 프레임으로 본다.
+
+#### 구현 주석 (보면 되는 함수)
+- 위치: `pintos/userprog/process.c`의 `validate_user_entry_frame()`
 
 ### 4.3 기능 C: 실패 경로 일관성 유지
-#### 구현 주석
-- 위치: `pintos/userprog/process.c`
-- 역할: 부분 세팅 상태 차단
-- 규칙 1: 스택 실패/레지스터 실패를 하나의 실패 경로로 모음
-- 규칙 2: 실패 시 자원 정리 후 `-1`/false로 종료
+#### 개념 설명
+파싱, 로드, 스택 빌드, 레지스터 세팅 중 하나라도 실패하면 부분적으로 준비된 프레임으로 유저 모드에 진입하면 안 됩니다.
+
+#### 시퀀스 및 흐름
+```mermaid
+sequenceDiagram
+  participant P as process_exec
+  participant B as build_user_stack_args
+  participant R as set_user_entry_registers
+  participant V as validate_user_entry_frame
+  P->>B: stack build
+  alt build 실패
+    P-->>P: cleanup 후 -1
+  else build 성공
+    P->>R: register setup
+    P->>V: frame validate
+  end
+```
+
+1. `load()` 실패 시 바로 정리 후 반환한다.
+2. `build_user_stack_args()` 실패 시 레지스터 세팅으로 넘어가지 않는다.
+3. `set_user_entry_registers()` 실패 시 `do_iret()`을 호출하지 않는다.
+4. `validate_user_entry_frame()` 성공 후에만 `file_name`, `cmd_line`을 해제하고 유저 진입한다.
+
+#### 구현 주석 (보면 되는 함수)
+- 위치: `pintos/userprog/process.c`의 `process_exec()`
 
 ## 5. 구현 주석 (위치별 정리)
 ### 5.1 `process_exec()` 유저 진입 준비부
