@@ -22,71 +22,13 @@
 #include "vm/vm.h"
 #endif
 
-#define MAX_ARGS 64 
 
 static void process_cleanup (void);
 static bool load (const char *file_name, struct intr_frame *if_);
 static void initd (void *f_name);
 static void __do_fork (void *);
 
-// 헬퍼 함수 (arg_parsing, arg_stack)
-static int
-arg_parsing(char *file_name, char **argv)
-{
-    char *save_ptr;
-    char *token = strtok_r(file_name, " ", &save_ptr);
-    int argc = 0;
 
-    while (token != NULL) {
-        argv[argc] = token;
-        argc++;
-	
-        token = strtok_r(NULL, " ", &save_ptr);
-    }
-
-    argv[argc] = NULL;
-
-	return argc; 
-}
-
-static void arg_stack(char **argv, int argc, struct intr_frame *if_) {	
-	// 1. 문자열이 실제로 복사된 user stack 주소를 저장할 배열을 만든다 
-	char *user_stack_addr[MAX_ARGS]; 
-	void *fake_address = 0; 
-
-	// 2. argv 문자열들을 뒤에서부터 user stack에 복사한다
-	for (int i = argc-1; i >= 0; i--) {
-		int len = strlen(argv[i]) + 1; 		
-		if (len % 8 != 0) {
-			int modular = len % 8; 
-			
-			if_->rsp -= len + (8 - modular); 
-			user_stack_addr[i] = if_->rsp; 		
-						
-			memcpy(if_->rsp, argv[i], len);		 		 
-			memset(if_->rsp + len, 0, 8 - modular); 	
-		} else {		
-			if_->rsp -= len; 
-			user_stack_addr[i] = if_->rsp; 					
-			memcpy(if_->rsp, argv[i], len);		 		 
-		}
-	}
-
-	argv[argc] = NULL; 
-	if_->rsp -= 8; 
-	memcpy(if_->rsp, &argv[argc], 8);
-	
-	for (int i = argc-1; i >= 0; i--) {
-		if_->rsp -= 8; 
-		memcpy(if_->rsp, &user_stack_addr[i], 8); 
-	} 
-	if_->R.rdi = argc; 
-	if_->R.rsi = (uint64_t) if_->rsp;
-	
-	// fake return address 
-	if_->rsp -= 8;	
-	memcpy(if_->rsp, &fake_address, 8); 
-}
 /* General process initializer for initd and other process. */
 static void
 process_init (void) {
@@ -95,8 +37,7 @@ process_init (void) {
 
 // 최대 인자 수 정의
 #define ARG_MAX 128
-// 최대 인자 길이 정의
-#define MAX_ARG_LENGTH 128
+
 
 bool parse_command_line_args(char *cmd_line, int *argc, char **argv){
 	// strtok_r() 첫 호출로 시작 토큰을 가져온다.
@@ -397,7 +338,7 @@ process_exec (void *f_name) {
 		palloc_free_page (file_name);
 		return -1;
 	}
-	
+
 	// 쓰기 가능한 복사 버퍼를 할당한다.
 	char *cmd_line = palloc_get_page (0);
 	if (cmd_line == NULL){
@@ -437,7 +378,7 @@ process_exec (void *f_name) {
 	/* We first kill the current context */
 	process_cleanup ();
 	
-	char *argv[MAX_ARGS]; 
+	char *args[ARG_MAX]; 
 	// TODO: Argument 분리해서 파일명만 load()로 넘기기 
 
 	// 기능 2: 사용자 스택 레이아웃 구성 부분 시작 (ABI 계약)
