@@ -30,7 +30,8 @@ void syscall_handler (struct intr_frame *);
 
 // 시스템콜 함수
 static int sys_write(int fd, const void *buffer, unsigned size);
-static void sys_exit(int status);
+void sys_exit(int status);
+
 
 // 유저 메모리 유효성 검사 함수
 static void fail_invalid_user_memory(void);
@@ -156,7 +157,7 @@ static int sys_write(int fd, const void *buffer, unsigned size) {
 	return 0;
 }
 
-static void
+void
 sys_exit(int status) {
     printf("%s: exit(%d)\n", thread_current()->name, status);
     thread_exit();

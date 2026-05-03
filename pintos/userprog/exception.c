@@ -84,10 +84,10 @@ kill (struct intr_frame *f) {
 		case SEL_UCSEG:
 			/* User's code segment, so it's a user exception, as we
 			   expected.  Kill the user process.  */
-			printf ("%s: dying due to interrupt %#04llx (%s).\n",
-					thread_name (), f->vec_no, intr_name (f->vec_no));
-			intr_dump_frame (f);
-			thread_exit ();
+			//user mode 예외는 커널 panic이 아니라 프로세스 종료로 처리한다.
+			// 종료 status는 -1로 관측되게 한다.
+			sys_exit(-1);
+			return;
 
 		case SEL_KCSEG:
 			/* Kernel's code segment, which indicates a kernel bug.
