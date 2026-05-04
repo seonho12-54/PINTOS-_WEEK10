@@ -19,7 +19,7 @@
 #include "threads/vaddr.h"
 #include "intrinsic.h"
 #include "threads/malloc.h"
-
+#include "threads/palloc.h"
 
 #ifdef VM
 #include "vm/vm.h"
@@ -236,11 +236,82 @@ tid_t
 process_fork (const char *name, struct intr_frame *if_ UNUSED) {
 	/* Clone current thread to new thread.*/
 
+   /*
+     * fork를 호출한 현재 thread가 부모다.
+     * 부모의 children 리스트에 자식 기록부를 넣을 것이다.
+     */
+    struct thread *parent = thread_current ();
 
+    /*
+     * 자식 기록부를 한 페이지 할당한다.
+     * malloc은 쓰지 않고, Pintos에서 이미 쓰고 있는 palloc을 사용한다.
+     */
+    struct child_status *cs = palloc_get_page (0);
+    if (cs == NULL)
+        return TID_ERROR;
+    /*
+     * 아직 thread_create 전이라 실제 자식 tid를 모른다.
+     * thread_create 성공 후에 진짜 tid를 채운다.
+     */
+    cs->tid = TID_ERROR;
+   /*
+     * 자식이 정상적으로 exit status를 남기기 전 기본값이다.
+     * 비정상 종료나 실패 경로에서는 -1을 반환해야 하므로 -1로 둔다.
+     */
+   cs->exit_status = -1;
 
-	return thread_create (name,
-			PRI_DEFAULT, __do_fork, thread_current ());
+    /*
+     * 부모가 아직 이 자식을 wait하지 않았다는 뜻이다.
+     * wait은 같은 자식에게 한 번만 가능하다.
+     */
+    cs->waited = false;
 
+    /*
+     * 자식이 아직 종료되지 않았다는 뜻이다.
+     * 자식이 process_exit()에 들어가면 true로 바꿀 것이다.
+     */
+    cs->exited = false;
+
+	/*
+     * 부모가 wait()에서 잠들 때 사용할 세마포어다.
+     * 0으로 시작해야 sema_down()을 호출한 부모가 잠든다.
+     * 자식이 종료할 때 sema_up()으로 부모를 깨운다.
+     */
+    sema_init (&cs->wait_sema, 0);
+
+/*
+     * 부모의 children 리스트에 이 자식 기록부를 넣는다.
+     * 나중에 process_wait(child_tid)가 이 리스트에서 child_tid를 찾는다.
+     */
+    list_push_back (&parent->children, &cs->elem);
+
+    /*
+     * 실제 자식 thread를 만든다.
+     * 지금은 parent만 넘기고 있지만,
+     * 다음 단계에서는 parent, cs, if_를 묶어서 __do_fork에 넘겨야 한다.
+     */
+    tid_t tid = thread_create (name, PRI_DEFAULT, __do_fork, parent);
+
+    /*
+     * thread 생성이 실패하면 방금 만든 기록부도 필요 없다.
+     * 부모 리스트에서 빼고 페이지를 반환한다.
+     */
+    if (tid == TID_ERROR) {
+        list_remove (&cs->elem);
+        palloc_free_page (cs);
+        return TID_ERROR;
+    }
+
+    /*
+     * thread_create가 성공하면 이제 자식 tid를 알 수 있다.
+     * 기록부에 진짜 자식 tid를 저장한다.
+     */
+    cs->tid = tid;
+
+    /*
+     * 부모에게는 fork의 반환값으로 자식 tid를 돌려준다.
+     */
+    return tid;
 
 
 }
