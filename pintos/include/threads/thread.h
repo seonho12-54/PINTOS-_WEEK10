@@ -5,6 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 #include "threads/interrupt.h"
+
 #ifdef VM
 #include "vm/vm.h"
 #endif
@@ -28,6 +29,7 @@ typedef int tid_t;
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
 
+#define ARG_MAX 128 
 /* A kernel thread or user process.
  *
  * Each thread structure is stored in its own 4 kB page.  The
@@ -109,6 +111,8 @@ struct thread {
 	// donation 리스트 연결용 전용 노드 필드(donation_elem)를 둔다.
 	struct list_elem donation_elem;
 
+	struct file* fd_table[ARG_MAX];
+	int next_fd; 
 	// donation 리스트 등록 상태 추적 플래그(in_donation_list)를 둔다.
 	bool in_donation_list;
 

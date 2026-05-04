@@ -10,6 +10,7 @@
 #include "threads/vaddr.h"
 #include "threads/mmu.h"
 #include "userprog/gdt.h"
+#include "userprog/process.h"
 #include "threads/flags.h"
 #include "lib/kernel/console.h"
 #include "intrinsic.h"
@@ -31,7 +32,11 @@ void syscall_handler (struct intr_frame *);
 
 // 시스템콜 함수
 static int sys_write(int fd, const void *buffer, unsigned size);
+static int sys_open(const char *file);
 void sys_exit(int status);
+
+// 기본 헬퍼 함수 
+static struct file* find_file_by_fd(int fd); 
 
 // 유저 메모리 유효성 검사 함수
 static void fail_invalid_user_memory(void);
@@ -146,14 +151,58 @@ validate_user_string(const char *str) {
 	}
 }
 
+// 기본 헬퍼 함수 
+static struct file* find_file_by_fd(int fd) {
+	struct file* file; 
+	struct thread* curr_thread = thread_current();
+
+	return curr_thread->fd_table[fd]; 
+}
+
 // 시스템 콜 함수들
 
-static int sys_write(int fd, const void *buffer, unsigned size) {
+static int sys_write(int fd, const void *buffer, unsigned size)
+{
+	struct file *file;
 	if (fd == 1) {
 		putbuf(buffer, size);
 		return size;
 	}
-	return 0;
+
+	// fd가 2이상일때, 현재 프로세스의 fd table에서 fd에 해당하는 struct file *를 찾음 find_file_from_fd()
+	// 없으면 return -1, 있으면 파일에 입력하는 함수 호출하고, 그 함수가 입력한 사이즈를 반환.
+	// fd에 해당하는 file* 찾는 함수 호출해서 파일 가져옴
+	// 있는지 없는지 검사
+	// 있다면 파일에 입력하는 함수 호출
+	// 함수가 반환하는 사이즈 그대로 반환
+	
+	file = find_file_by_fd(fd);
+	if (file == NULL)
+		return -1;
+	if (fd >= 2)
+		return file_write(file, buffer, size);
+	if (fd == 0)
+		return -1;
+	if (fd < 0)
+		return -1;
+}
+
+static int 
+sys_open(const char *file_name) {
+	if (!is_valid_user_ptr(file_name)) {
+		sys_exit(-1);
+	}
+
+	// sys_open이 filesys_open(file_name)을 호출 
+	// filesys_open이 디렉터리에서 파일 이름을 찾고 inode를 얻음
+	// filesys_open 내부에서 file_open(inode) 호출
+	// file_open이 struct file * 객체를 만들어 반환
+	struct file* file = filesys_open(file_name); 
+	struct thread *curr_thread = thread_current(); 
+
+	curr_thread->fd_table[curr_thread->next_fd] = file; 
+	
+	return curr_thread->next_fd++; 
 }
 
 void
@@ -209,6 +258,9 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		case SYS_WRITE:
 			f->R.rax = sys_write(f->R.rdi, f->R.rsi, f->R.rdx);
 			break;
+		case SYS_OPEN: 
+			f->R.rax = sys_open(f->R.rdi); 
+			break; 
 		case SYS_EXIT:
 			sys_exit(f->R.rdi);		
 			break; 
