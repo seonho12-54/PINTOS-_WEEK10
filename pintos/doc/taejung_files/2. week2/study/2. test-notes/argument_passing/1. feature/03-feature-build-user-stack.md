@@ -48,12 +48,12 @@ sequenceDiagram
 #### 시퀀스 및 흐름
 ```mermaid
 flowchart TD
-  INIT[sp = user_if->rsp] --> LOOP[argc - 1부터 0까지 반복]
-  LOOP --> LEN[strlen(argv[i]) + 1 계산]
-  LEN --> DEC[sp를 len만큼 감소]
-  DEC --> BOUND[USER_STACK - PGSIZE 하한 검사]
-  BOUND --> COPY[문자열과 NUL 복사]
-  COPY --> SAVE[arg_addrs[i] = sp]
+  INIT["sp = user_if->rsp"] --> LOOP["argc - 1부터 0까지 반복"]
+  LOOP --> LEN["strlen(argv[i]) + 1 계산"]
+  LEN --> DEC["sp를 len만큼 감소"]
+  DEC --> BOUND["USER_STACK - PGSIZE 하한 검사"]
+  BOUND --> COPY["문자열과 NUL 복사"]
+  COPY --> SAVE["arg_addrs[i] = sp"]
 ```
 
 1. `setup_stack()`이 만든 초기 `rsp`에서 시작한다.
@@ -98,9 +98,9 @@ sequenceDiagram
 #### 시퀀스 및 흐름
 ```mermaid
 flowchart LR
-  AV[argv_user_addr 저장] --> FAKE[fake return address 0 push]
-  FAKE --> RSP[user_if->rsp = sp]
-  RSP --> DONE[스택 빌드 성공 반환]
+  AV["argv_user_addr 저장"] --> FAKE["fake return address 0 push"]
+  FAKE --> RSP["user_if->rsp = sp"]
+  RSP --> DONE["스택 빌드 성공 반환"]
 ```
 
 1. 포인터 배열 시작 주소를 `*argv_user_addr`에 저장한다.

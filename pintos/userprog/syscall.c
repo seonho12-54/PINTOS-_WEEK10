@@ -27,7 +27,7 @@ void syscall_handler (struct intr_frame *);
 
 static int sys_exec (const char *cmd_line); // 실행파일 선언
 static void sys_halt (void);
-static void sys_exit (int status);
+void sys_exit (int status);
 static bool sys_create (const char *file, unsigned initial_size);
 static int sys_open (const char *file_name);
 static int sys_filesize (int fd);
@@ -145,7 +145,7 @@ sys_halt (void) {
 	power_off ();
 }
 
-static void
+void
 sys_exit (int status) {
 	struct thread *curr = thread_current ();
 	curr->exit_status = status;
@@ -278,7 +278,7 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			sys_close (f->R.rdi);
 			break;
 		case SYS_EXEC:
-			f->R.rax = process_exec((const char *) f->R.rdi);
+			f->R.rax = sys_exec ((const char *) f->R.rdi);
 			break;
 		default:
 			sys_exit (-1);

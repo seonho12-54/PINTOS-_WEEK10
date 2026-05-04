@@ -204,6 +204,14 @@ bool validate_user_entry_frame(struct intr_frame *user_if){
 	if(!is_user_vaddr((void *) user_if->rsp)){
 		return false;
 	}
+	if (user_if->R.rdi == 0 || user_if->R.rdi > ARG_MAX)
+		return false;
+	if (!is_user_vaddr ((void *) user_if->R.rsi))
+		return false;
+	if ((user_if->R.rsi % sizeof (void *)) != 0)
+		return false;
+	if (pml4_get_page (thread_current ()->pml4, (void *) user_if->R.rsi) == NULL)
+		return false;
 	return true;
 }
 
@@ -629,12 +637,10 @@ process_wait (tid_t child_tid UNUSED) {
 			}
 		}
 			if (target == NULL) {
-				curr->exit_status = -1;
-				thread_exit ();
+				return -1;
 			}
 			if(target->waited) {
-				curr->exit_status = -1;
-				thread_exit ();
+				return -1;
 			}
 			target->waited = true;
 			if (!target ->exited)

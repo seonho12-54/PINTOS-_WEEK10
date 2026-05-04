@@ -9,7 +9,8 @@ struct file {
 	off_t pos;                  /* Current position. */
 	bool deny_write;            /* Has file_deny_write() been called? */
 };
-
+// fd_table[2] = *file_pointer
+// fd_table[3] = *file_pointer  
 /* Opens a file for the given INODE, of which it takes ownership,
  * and returns the new file.  Returns a null pointer if an
  * allocation fails or if INODE is null. */
@@ -73,6 +74,7 @@ off_t
 file_read (struct file *file, void *buffer, off_t size) {
 	off_t bytes_read = inode_read_at (file->inode, buffer, size, file->pos);
 	file->pos += bytes_read;
+	
 	return bytes_read;
 }
 
