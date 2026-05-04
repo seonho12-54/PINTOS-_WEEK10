@@ -32,6 +32,13 @@ static void initd (void *f_name);
 static void __do_fork (void *);
 
 
+struct fork_args {
+    struct thread *parent;
+    struct child_status *child_status;
+    struct intr_frame parent_if;
+
+	
+};
 
 
 
@@ -279,6 +286,26 @@ process_fork (const char *name, struct intr_frame *if_ UNUSED) {
      */
     sema_init (&cs->wait_sema, 0);
 
+    struct fork_args *args = palloc_get_page (0);
+    if (args == NULL) {
+        list_remove (&cs->elem);
+        palloc_free_page (cs);
+        return TID_ERROR;
+    }
+
+
+	args->parent = parent;
+	args->child_status = cs;
+	memcpy (&args->parent_if, if_, sizeof *if_);
+	/*
+	parent: 자식이 부모 주소 공간을 복사하려고 필요
+	child_status: 자식이 자기 기록부를 알아야 함
+	parent_if: 자식이 부모의 유저 실행 상태를 복사해야 함
+
+	*/
+
+
+
 /*
      * 부모의 children 리스트에 이 자식 기록부를 넣는다.
      * 나중에 process_wait(child_tid)가 이 리스트에서 child_tid를 찾는다.
@@ -290,8 +317,7 @@ process_fork (const char *name, struct intr_frame *if_ UNUSED) {
      * 지금은 parent만 넘기고 있지만,
      * 다음 단계에서는 parent, cs, if_를 묶어서 __do_fork에 넘겨야 한다.
      */
-    tid_t tid = thread_create (name, PRI_DEFAULT, __do_fork, parent);
-
+    tid_t tid = thread_create (name, PRI_DEFAULT, __do_fork, args);
     /*
      * thread 생성이 실패하면 방금 만든 기록부도 필요 없다.
      * 부모 리스트에서 빼고 페이지를 반환한다.
@@ -354,15 +380,20 @@ duplicate_pte (uint64_t *pte, void *va, void *aux) {
  *       this function. */
 static void
 __do_fork (void *aux) {
-	struct intr_frame if_;
-	struct thread *parent = (struct thread *) aux;
-	struct thread *current = thread_current ();
-	/* TODO: somehow pass the parent_if. (i.e. process_fork()'s if_) */
-	struct intr_frame *parent_if;
-	bool succ = true;
+    struct intr_frame if_;
+    struct fork_args *args = aux;
+    struct thread *parent = args->parent;
+    struct child_status *cs = args->child_status;
+    struct thread *current = thread_current ();
+    bool succ = true;
+
 
 	/* 1. Read the cpu context to local stack. */
-	memcpy (&if_, parent_if, sizeof (struct intr_frame));
+
+    memcpy (&if_, &args->parent_if, sizeof if_);
+    current->my_status = cs;
+    if_.R.rax = 0;
+
 
 	/* 2. Duplicate PT */
 	current->pml4 = pml4_create();
@@ -389,10 +420,14 @@ __do_fork (void *aux) {
 
 	/* Finally, switch to the newly created process. */
 	if (succ)
+	    palloc_free_page (args);
 		do_iret (&if_);
 error:
+	palloc_free_page (args);
 	thread_exit ();
 }
+
+
 
 
 /* Switch the current execution context to the f_name.
