@@ -497,6 +497,10 @@ init_thread (struct thread *t, const char *name, int priority) {
 	t->in_donation_list = false;
 
 #ifdef USERPROG
+    t->next_fd = 2;
+    for (int i = 0; i < ARG_MAX; i++) {
+        t->fd_table[i] = NULL;
+    }
     list_init(&t->children);
     t->my_status = NULL;
     t->exit_status = 0;

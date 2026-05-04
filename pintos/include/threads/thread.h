@@ -23,10 +23,12 @@ enum thread_status {
 /* Thread identifier type.
    You can redefine this to whatever type you like. */
 typedef int tid_t;
-#define TID_ERROR ((tid_t) -1)  
+#define TID_ERROR ((tid_t) -1)
         /* Error value for tid_t. */
 
-		
+#ifndef ARG_MAX
+#define ARG_MAX 128
+#endif
 
 struct child_status {
     tid_t tid;
@@ -133,6 +135,8 @@ struct thread {
 	bool in_donation_list;
 #ifdef USERPROG
     uint64_t *pml4;
+    struct file *fd_table[ARG_MAX];
+    int next_fd;
     struct list children;
     struct child_status *my_status;
     int exit_status;

@@ -36,9 +36,31 @@ struct fork_args {
     struct thread *parent;
     struct child_status *child_status;
     struct intr_frame parent_if;
-
-	
 };
+
+static bool
+duplicate_fd_table (struct thread *parent, struct thread *child) {
+    child->next_fd = parent->next_fd;
+
+    for (int fd = 2; fd < ARG_MAX; fd++) {
+        struct file *parent_file = parent->fd_table[fd];
+        if (parent_file == NULL)
+            continue;
+
+        child->fd_table[fd] = file_duplicate (parent_file);
+        if (child->fd_table[fd] == NULL) {
+            for (int used_fd = 2; used_fd < fd; used_fd++) {
+                if (child->fd_table[used_fd] != NULL) {
+                    file_close (child->fd_table[used_fd]);
+                    child->fd_table[used_fd] = NULL;
+                }
+            }
+            return false;
+        }
+    }
+
+    return true;
+}
 
 
 
@@ -442,6 +464,8 @@ __do_fork (void *aux) {
 	 * TODO:       in include/filesys/file.h. Note that parent should not return
 	 * TODO:       from the fork() until this function successfully duplicates
 	 * TODO:       the resources of parent.*/
+	if (!duplicate_fd_table (parent, current))
+		goto error;
 
 	process_init ();
 
@@ -604,10 +628,14 @@ process_wait (tid_t child_tid UNUSED) {
 				break;
 			}
 		}
-			if (target == NULL)
-				 exit(-1);
-			if(target->waited)
-				exit(-1);
+			if (target == NULL) {
+				curr->exit_status = -1;
+				thread_exit ();
+			}
+			if(target->waited) {
+				curr->exit_status = -1;
+				thread_exit ();
+			}
 			target->waited = true;
 			if (!target ->exited)
 				sema_down (&target->wait_sema);
@@ -632,10 +660,17 @@ process_exit (void) {
 	 * TODO: We recommend you to implement process resource cleanup here. */
 	
 	if (curr->my_status != NULL) {
-    curr->my_status->exit_status = curr->exit_status;
-    curr->my_status->exited = true;
-    sema_up (&curr->my_status->wait_sema);
-}
+		curr->my_status->exit_status = curr->exit_status;
+		curr->my_status->exited = true;
+		sema_up (&curr->my_status->wait_sema);
+	}
+
+	for (int fd = 2; fd < ARG_MAX; fd++) {
+		if (curr->fd_table[fd] != NULL) {
+			file_close (curr->fd_table[fd]);
+			curr->fd_table[fd] = NULL;
+		}
+	}
 
 
 	process_cleanup ();
