@@ -94,3 +94,18 @@ User Memory Access와 System Calls를 섞으면 bad pointer 테스트와 정상 
 - `exec` 성공/실패를 부모가 정확히 알 수 있는가?
 - `wait`가 자식/비자식/중복 wait를 구분하는가?
 - 실행 파일이 열려 있는 동안 write가 거부되는가?
+
+---
+
+## 8) 구현 주석(5장)은 어느 문서에 있는가
+
+이 파일(`01`)은 큰 그림용이라 **5장 구현 주석을 두지 않는다.** 코드에 옮길 때는 아래 문서의 **5. 구현 주석 (위치별 정리)** 를 기준으로 한다.
+
+| 주제 | 문서 |
+| --- | --- |
+| 진입·dispatch·인자·반환 | `02-feature-syscall-dispatch-and-args.md` |
+| `halt`·`exit`·`fork`·`exec`·`wait`·`process_*` | `03-feature-process-syscalls.md` |
+| fd table·파일 syscall | `04-feature-file-syscalls-and-fd-table.md` |
+| 실행 파일 deny-write·rox | `05-feature-executable-write-deny.md` |
+| 사용자 인자 스택·`process_exec`와의 연결 | `../argument_passing/1. feature/` |
+| 포인터·문자열·버퍼 검증 | `../user_memory_access/1. feature/` |
