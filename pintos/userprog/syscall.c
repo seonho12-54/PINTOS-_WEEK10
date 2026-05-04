@@ -1,424 +1,287 @@
 #include "userprog/syscall.h"
-#include <stdio.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include <syscall-nr.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <string.h>
+#include <syscall-nr.h>
+#include "devices/input.h"
+#include "filesys/directory.h"
+#include "filesys/file.h"
+#include "filesys/filesys.h"
+#include "intrinsic.h"
+#include "lib/kernel/console.h"
+#include "threads/flags.h"
+#include "threads/init.h"
 #include "threads/interrupt.h"
-#include "threads/thread.h"
 #include "threads/loader.h"
-#include "threads/vaddr.h"
 #include "threads/mmu.h"
-#include "threads/palloc.h"
+#include "threads/thread.h"
+#include "threads/vaddr.h"
 #include "userprog/gdt.h"
 #include "userprog/process.h"
-#include "threads/flags.h"
-#include "lib/kernel/console.h"
-#include "intrinsic.h"
-#include "lib/kernel/stdio.h"
-#include "filesys/filesys.h"
-#include "filesys/directory.h"
-#include "threads/init.h"  // power_off 함수
-#include "filesys/file.h"  // file_write 함수
-#include "devices/input.h" //sys_read
+#include "threads/palloc.h"
 
-// 평소에는 꺼두기
-#define USER_MEM_DEBUG 0
-#if USER_MEM_DEBUG
-#define user_mem_debug(...) printf(__VA_ARGS__)
-#else
-#define user_mem_debug(...) ((void)0)
-#endif
+void syscall_entry (void);
+void syscall_handler (struct intr_frame *);
 
-void syscall_entry(void);
-void syscall_handler(struct intr_frame *);
+static int sys_exec (const char *cmd_line); // 실행파일 선언
+static void sys_halt (void);
+void sys_exit (int status);
+static bool sys_create (const char *file, unsigned initial_size);
+static int sys_open (const char *file_name);
+static int sys_filesize (int fd);
+static int sys_read (int fd, void *buffer, unsigned size);
+static int sys_write (int fd, const void *buffer, unsigned size);
+static void sys_close (int fd);
 
-// 시스템콜 함수
-static int sys_write(int fd, const void *buffer, unsigned size);
-static int sys_open(const char *file);
-static void sys_close(int fd);
-static int sys_read(int fd, void *buffer, unsigned size);
-static bool sys_create(const char *file, unsigned initial_size);
-static void sys_halt(void);
-void sys_exit(int status);
+static struct file *find_file_by_fd (int fd);
+static bool file_name_is_empty (const char *file);
+static bool file_name_is_too_long (const char *file);
 
-// 기본 헬퍼 함수
-static struct file *find_file_by_fd(int fd);
-static bool file_name_is_empty(const char *file);
-static bool file_name_is_too_long(const char *file);
+static void fail_invalid_user_memory (void);
+static bool is_valid_user_ptr (const void *uaddr);
+static void validate_user_ptr (const void *uaddr);
+static void validate_user_buffer (const void *buffer, size_t size);
+static void validate_user_string (const char *str);
 
-// 유저 메모리 유효성 검사 함수
-static void fail_invalid_user_memory(void);
-static bool is_valid_user_ptr(const void *uaddr);
-static void validate_user_ptr(const void *uaddr);
-static void validate_user_buffer(const void *buffer, size_t size);
-static void validate_user_string(const char *str);
+#define MSR_STAR 0xc0000081
+#define MSR_LSTAR 0xc0000082
+#define MSR_SYSCALL_MASK 0xc0000084
 
-/* System call.
- *
- * Previously system call services was handled by the interrupt handler
- * (e.g. int 0x80 in linux). However, in x86-64, the manufacturer supplies
- * efficient path for requesting the system call, the `syscall` instruction.
- *
- * The syscall instruction works by reading the values from the the Model
- * Specific Register (MSR). For the details, see the manual. */
 
-#define MSR_STAR 0xc0000081			/* Segment selector msr */
-#define MSR_LSTAR 0xc0000082		/* Long mode SYSCALL target */
-#define MSR_SYSCALL_MASK 0xc0000084 /* Mask for the eflags */
+static int //시스템 실행 시스템 콜 핸들러에서 호출되는 sys_exec() 
+//함수를 구현한다.
+sys_exec (const char *cmd_line) {
+    validate_user_string (cmd_line);
 
-void syscall_init(void)
-{
-	write_msr(MSR_STAR, ((uint64_t)SEL_UCSEG - 0x10) << 48 |
-							((uint64_t)SEL_KCSEG) << 32);
-	write_msr(MSR_LSTAR, (uint64_t)syscall_entry);
+    char *cmd_copy = palloc_get_page (0);
+    if (cmd_copy == NULL)
+        return -1;
 
-	/* The interrupt service rountine should not serve any interrupts
-	 * until the syscall_entry swaps the userland stack to the kernel
-	 * mode stack. Therefore, we masked the FLAG_FL. */
-	write_msr(MSR_SYSCALL_MASK,
-			  FLAG_IF | FLAG_TF | FLAG_DF | FLAG_IOPL | FLAG_AC | FLAG_NT);
+    strlcpy (cmd_copy, cmd_line, PGSIZE);
+
+    return process_exec (cmd_copy);
 }
 
-static bool
-file_name_is_empty(const char *file)
-{
-	return strlen(file) == 0;
+
+
+void
+syscall_init (void) {
+	write_msr (MSR_STAR, ((uint64_t) SEL_UCSEG - 0x10) << 48 |
+			((uint64_t) SEL_KCSEG) << 32);
+	write_msr (MSR_LSTAR, (uint64_t) syscall_entry);
+	write_msr (MSR_SYSCALL_MASK,
+			FLAG_IF | FLAG_TF | FLAG_DF | FLAG_IOPL | FLAG_AC | FLAG_NT);
 }
 
-static bool
-file_name_is_too_long(const char *file)
-{
-	return strlen(file) > NAME_MAX;
-}
-
-// 유저 메모리 유효성 검사 함수들
-// 실패 종료 경로 함수
 static void
-fail_invalid_user_memory(void)
-{
-	// 잘못된 사용자 메모리는 현재 프로세스를 exit(-1)로 종료한다.
-	// validate_*() 계열 helper의 공통 실패 경로로 사용한다.
-	// 호출 이후 정상 syscall 반환값을 만들지 않는다.
-	sys_exit(-1);
+fail_invalid_user_memory (void) {
+	sys_exit (-1);
 }
 
-// 접근 가능한 사용자 주소인지 판별하는 함수
 static bool
-is_valid_user_ptr(const void *uaddr)
-{
-
-	// NULL 포인터를 실패 처리한다.
+is_valid_user_ptr (const void *uaddr) {
 	if (uaddr == NULL)
-	{
-		user_mem_debug("invalid user ptr: NULL\n");
 		return false;
-	}
-
-	// is_user_vaddr()로 커널 주소를 차단한다.
-	if (!is_user_vaddr((void *)uaddr))
-	{
-		user_mem_debug("invalid user ptr: kernel addr %p\n", uaddr);
+	if (!is_user_vaddr ((void *) uaddr))
 		return false;
-	}
-
-	// 현재 thread의 page table에서 매핑 여부를 확인한다.
-	if (pml4_get_page(thread_current()->pml4, (void *)uaddr) == NULL)
-	{
-		user_mem_debug("invalid user ptr: unmapped %p\n", uaddr);
+	if (pml4_get_page (thread_current ()->pml4, (void *) uaddr) == NULL)
 		return false;
-	}
-
 	return true;
 }
 
-// 단일 포인터 검증 함수
 static void
-validate_user_ptr(const void *uaddr)
-{
-
-	// 규칙 1: 내부 판별은 is_valid_user_ptr()에 위임한다.
-	if (!is_valid_user_ptr(uaddr))
-	{
-		// 실패 시 fail_invalid_user_memory()를 호출한다.
-		fail_invalid_user_memory();
-	}
+validate_user_ptr (const void *uaddr) {
+	if (!is_valid_user_ptr (uaddr))
+		fail_invalid_user_memory ();
 }
 
 static void
-validate_user_buffer(const void *buffer, size_t size)
-{
-	// size == 0은 빈 범위로 처리한다.
+validate_user_buffer (const void *buffer, size_t size) {
 	if (size == 0)
-	{
 		return;
-	}
-	// 시작 주소를 검증한다.
-	validate_user_ptr(buffer);
-	// buffer가 가리키는 메모리 범위의 마지막 바이트도 유효한 사용자 주소인지 확인한다
-	validate_user_ptr((const uint8_t *)buffer + size - 1);
 
-	for (const uint8_t *page = pg_round_down(buffer);
-		 page <= (const uint8_t *)pg_round_down((const uint8_t *)buffer + size - 1);
-		 page += PGSIZE)
-	{
-		validate_user_ptr(page);
+	validate_user_ptr (buffer);
+	validate_user_ptr ((const uint8_t *) buffer + size - 1);
+
+	for (const uint8_t *page = pg_round_down (buffer);
+		 page <= (const uint8_t *) pg_round_down ((const uint8_t *) buffer + size - 1);
+		 page += PGSIZE) {
+		validate_user_ptr (page);
 	}
 }
 
 static void
-validate_user_string(const char *str)
-{
-	// 규칙 1: 시작 주소뿐 아니라 각 문자 위치를 검증한다.
-	validate_user_ptr(str);
-
-	// 규칙 2: NUL 종료를 발견하면 검증을 종료한다.
-	while (true)
-	{
-		validate_user_ptr(str);
+validate_user_string (const char *str) {
+	validate_user_ptr (str);
+	while (true) {
+		validate_user_ptr (str);
 		if (*str == '\0')
-		{
 			return;
-		}
 		str++;
 	}
 }
 
-// 기본 헬퍼 함수
-static struct file *find_file_by_fd(int fd)
-{
-	struct file *file;
-	struct thread *curr_thread = thread_current();
-
-	return curr_thread->fd_table[fd];
-}
-
-static int sys_write(int fd, const void *buffer, unsigned size)
-{
-	struct file *file;
-
-	validate_user_buffer(buffer, size);
-	// 표준출력, 버퍼에서 size만큼 읽어서 터미널에 출력
-	if (fd == 1)
-	{
-		putbuf(buffer, size);
-		return size;
-	}
-	if (fd <= 0)
-	{
-		return -1;
-	}
-	if (fd >= ARG_MAX)
-	{
-		return -1;
-	}
-
-	// fd_table[fd]의 file*를 가져옴
-	file = find_file_by_fd(fd);
-	if (file == NULL)
-		return -1;
-
-	// fd가 2이상이면 일반파일, 찾아온 file에 버퍼 내용을 size만큼 쓰기
-	return file_write(file, buffer, size);
-}
-
-// 파일 안에 데이터가 몇 바이트인지 확인
-static int sys_filesize(int fd)
-{
-	struct file *file;
-	if (fd < 2)
-	{
-		return -1;
-	}
-	if (fd >= ARG_MAX)
-	{
-		return -1;
-	}
-	file = find_file_by_fd(fd);
-	if (file == NULL)
-	{
-		return -1;
-	}
-	return file_length(file);
-}
-
-static int sys_read(int fd, void *buffer, unsigned size)
-{
-	struct file *file;
-	validate_user_buffer(buffer, size);
-	if (size == 0)
-		return 0;
-	if (fd == 1)
-		return -1;
-	if (fd < 0)
-		return -1;
-	if (fd >= ARG_MAX)
-		return -1;
-
-	if (fd == 0) // 표준입력,  size만큼 반복, 문자 하나를 읽어서 버퍼에 저장후, size반환
-	{
-		for (int i = 0; i < size; i++)
-		{
-			((uint8_t *)buffer)[i] = input_getc();
-		}
-		return size;
-	}
-
-	if (fd >= 2)
-	{
-		file = find_file_by_fd(fd);
-		if (file == NULL)
-			return -1;
-		int bytes = file_read(file, buffer, size);
-		return bytes;
-	}
-	return -1;
-}
-
-static int
-sys_open(const char *file_name)
-{
-	if (!is_valid_user_ptr(file_name))
-	{
-		sys_exit(-1);
-	}
-
-	validate_user_string(file_name);
-
-	if (file_name_is_empty(file_name))
-	{
-		return -1;
-	}
-
-	// sys_open이 filesys_open(file_name)을 호출
-	// filesys_open이 디렉터리에서 파일 이름을 찾고 inode를 얻음
-	// filesys_open 내부에서 file_open(inode) 호출
-	// file_open이 struct file * 객체를 만들어 반환
-	struct file *file = filesys_open(file_name);
-
-	// open-missing 테스트
-	if (file == NULL)
-	{
-		return -1;
-	}
-
-	struct thread *curr_thread = thread_current();
-
-	curr_thread->fd_table[curr_thread->next_fd] = file;
-	return curr_thread->next_fd++;
-}
-
-static void sys_close(int fd){
-	if (fd < 2) {
-		return;
-	}
-	if (fd >= ARG_MAX){
-		return;
-	}
-
-	struct thread * curr = thread_current();
-	struct file * file;
-	file = find_file_by_fd(fd);
-
-	if (file == NULL) {
-		return;
-	}
-	
-	file_close(file);
-	curr->fd_table[fd]=NULL;
-}
-
-void sys_exit(int status)
-{
-	printf("%s: exit(%d)\n", thread_current()->name, status);
-	thread_exit();
+static bool
+file_name_is_empty (const char *file) {
+	return strlen (file) == 0;
 }
 
 static bool
-sys_create(const char *file, unsigned initial_size)
-{
-	if (!is_valid_user_ptr(file))
-	{
-		sys_exit(-1);
-	}
+file_name_is_too_long (const char *file) {
+	return strlen (file) > NAME_MAX;
+}
 
-	validate_user_string(file);
-
-	if (file_name_is_empty(file))
-	{
-		return false;
-	}
-
-	if (file_name_is_too_long(file))
-	{
-		return false;
-	}
-
-	bool is_file_created = filesys_create(file, initial_size);
-
-	if (!is_file_created)
-	{
-		return false;
-	}
-
-	return true;
+static struct file *
+find_file_by_fd (int fd) {
+	if (fd < 2 || fd >= ARG_MAX)
+		return NULL;
+	return thread_current ()->fd_table[fd];
 }
 
 static void
-sys_halt(void)
-{
-	power_off();
+sys_halt (void) {
+	power_off ();
 }
 
-/* The main system call interface */
-void syscall_handler(struct intr_frame *f UNUSED)
-{
-	// 10번이 SYS_WRITE
+void
+sys_exit (int status) {
+	struct thread *curr = thread_current ();
+	curr->exit_status = status;
+	printf ("%s: exit(%d)\n", curr->name, status);
+	thread_exit ();
+}
+
+static bool
+sys_create (const char *file, unsigned initial_size) {
+	validate_user_string (file);
+
+	if (file_name_is_empty (file))
+		return false;
+	if (file_name_is_too_long (file))
+		return false;
+
+	return filesys_create (file, initial_size);
+}
+
+static int
+sys_open (const char *file_name) {
+	struct thread *curr = thread_current ();
+	struct file *file;
+
+	validate_user_string (file_name);
+	if (file_name_is_empty (file_name))
+		return -1;
+	if (curr->next_fd >= ARG_MAX)
+		return -1;
+
+	file = filesys_open (file_name);
+	if (file == NULL)
+		return -1;
+
+	curr->fd_table[curr->next_fd] = file;
+	return curr->next_fd++;
+}
+
+static int
+sys_filesize (int fd) {
+	struct file *file = find_file_by_fd (fd);
+	if (file == NULL)
+		return -1;
+	return file_length (file);
+}
+
+static int
+sys_read (int fd, void *buffer, unsigned size) {
+	validate_user_buffer (buffer, size);
+
+	if (size == 0)
+		return 0;
+	if (fd == 1 || fd < 0 || fd >= ARG_MAX)
+		return -1;
+
+	if (fd == 0) {
+		for (unsigned i = 0; i < size; i++)
+			((uint8_t *) buffer)[i] = input_getc ();
+		return size;
+	}
+
+	struct file *file = find_file_by_fd (fd);
+	if (file == NULL)
+		return -1;
+	return file_read (file, buffer, size);
+}
+
+static int
+sys_write (int fd, const void *buffer, unsigned size) {
+	validate_user_buffer (buffer, size);
+
+	if (fd == 1) {
+		putbuf (buffer, size);
+		return size;
+	}
+	if (fd <= 0 || fd >= ARG_MAX)
+		return -1;
+
+	struct file *file = find_file_by_fd (fd);
+	if (file == NULL)
+		return -1;
+	return file_write (file, buffer, size);
+}
+
+static void
+sys_close (int fd) {
+	struct thread *curr = thread_current ();
+	struct file *file = find_file_by_fd (fd);
+
+	if (file == NULL)
+		return;
+
+	file_close (file);
+	curr->fd_table[fd] = NULL;
+}
+
+void
+syscall_handler (struct intr_frame *f UNUSED) {
 	int sys_call = f->R.rax;
 
-	switch (sys_call)
-	{
-	case SYS_WRITE:
-		f->R.rax = sys_write(f->R.rdi, f->R.rsi, f->R.rdx);
-		break;
-	case SYS_OPEN:
-		f->R.rax = sys_open(f->R.rdi);
-		break;
-	case SYS_EXIT:
-		sys_exit(f->R.rdi);
-		break;
-	case SYS_CREATE:
-		f->R.rax = sys_create(f->R.rdi, f->R.rsi);
-		break;
-	case SYS_HALT:
-		sys_halt();
-		break;
-	case SYS_READ:
-		f->R.rax = sys_read(f->R.rdi, f->R.rsi, f->R.rdx);
-		break;
-	case SYS_FILESIZE:
-		f->R.rax = sys_filesize(f->R.rdi);
-		break;
-	case SYS_CLOSE:
-		sys_close((int) f->R.rdi);
-		break;
-	case SYS_EXEC:
-	{
-		char *copied_cmd;
-
-		validate_user_string((const char *) f->R.rdi);
-		copied_cmd = palloc_get_page(0);
-		if (copied_cmd == NULL)
-		{
-			f->R.rax = -1;
+	switch (sys_call) {
+		case SYS_HALT:
+			sys_halt ();
 			break;
-		}
-		strlcpy(copied_cmd, (const char *) f->R.rdi, PGSIZE);
-		f->R.rax = process_exec(copied_cmd);
-		break;
-	}
-	default:
-		sys_exit(-1);
-		break;
+		case SYS_EXIT:
+			sys_exit (f->R.rdi);
+			break;
+		case SYS_FORK:
+			f->R.rax = process_fork ((const char *) f->R.rdi, f);
+			break;
+		case SYS_WAIT:
+			f->R.rax = process_wait ((tid_t) f->R.rdi);
+			break;
+		case SYS_CREATE:
+			f->R.rax = sys_create ((const char *) f->R.rdi, f->R.rsi);
+			break;
+		case SYS_OPEN:
+			f->R.rax = sys_open ((const char *) f->R.rdi);
+			break;
+		case SYS_FILESIZE:
+			f->R.rax = sys_filesize (f->R.rdi);
+			break;
+		case SYS_READ:
+			f->R.rax = sys_read (f->R.rdi, (void *) f->R.rsi, f->R.rdx);
+			break;
+		case SYS_WRITE:
+			f->R.rax = sys_write (f->R.rdi, (const void *) f->R.rsi, f->R.rdx);
+			break;
+		case SYS_CLOSE:
+			sys_close (f->R.rdi);
+			break;
+		case SYS_EXEC:
+			f->R.rax = sys_exec ((const char *) f->R.rdi);
+			break;
+		default:
+			sys_exit (-1);
+			break;
 	}
 }
