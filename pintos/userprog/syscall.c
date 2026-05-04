@@ -15,6 +15,7 @@
 #include <stddef.h>
 #include "threads/vaddr.h"
 #include "threads/mmu.h"
+#include "threads/palloc.h"
 #include "userprog/process.h"
 
 #define USER_MEM_DEBUG 0
@@ -150,12 +151,11 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		case SYS_EXIT:
 			sys_exit(f->R.rdi);
 			break;
-		case SYS_EXEC:
-			// handler에서 rdi=cmd_line을 읽는다.
-			// 문자열 포인터를 검증한다.
-			validate_user_string(f->R.rdi);
-			// 커널 page에 command line을 복사한다.
-			char *copied_cmd = palloc_get_page(0);
+		case SYS_EXEC: {
+			char *copied_cmd;
+
+			validate_user_string((const char *) f->R.rdi);
+			copied_cmd = palloc_get_page(0);
 			if (copied_cmd == NULL) {
 				f->R.rax = -1;
 				break;
@@ -163,6 +163,7 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			strlcpy (copied_cmd, (const char *) f->R.rdi, PGSIZE);
 			f->R.rax = process_exec (copied_cmd);
 			break;
+		}
 		default:
 			break;
 	}
