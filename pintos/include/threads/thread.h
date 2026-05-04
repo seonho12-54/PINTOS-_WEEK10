@@ -8,6 +8,7 @@
 #ifdef VM
 #include "vm/vm.h"
 #endif
+#include "threads/synch.h"
 
 
 /* States in a thread's life cycle. */
@@ -18,10 +19,25 @@ enum thread_status {
 	THREAD_DYING        /* About to be destroyed. */
 };
 
+
 /* Thread identifier type.
    You can redefine this to whatever type you like. */
 typedef int tid_t;
-#define TID_ERROR ((tid_t) -1)          /* Error value for tid_t. */
+#define TID_ERROR ((tid_t) -1)  
+        /* Error value for tid_t. */
+
+		
+
+struct child_status {
+    tid_t tid;
+    int exit_status;
+    bool waited;
+    bool exited;
+    struct semaphore wait_sema;
+    struct list_elem elem;
+};
+
+
 
 /* Thread priorities. */
 #define PRI_MIN 0                       /* Lowest priority. */
@@ -111,11 +127,13 @@ struct thread {
 
 	// donation 리스트 등록 상태 추적 플래그(in_donation_list)를 둔다.
 	bool in_donation_list;
-
 #ifdef USERPROG
-	/* Owned by userprog/process.c. */
-	uint64_t *pml4;                     /* Page map level 4 */
+    uint64_t *pml4;
+    struct list children;
+    struct child_status *my_status;
+    int exit_status;
 #endif
+
 #ifdef VM
 	/* Table for whole virtual memory owned by thread. */
 	struct supplemental_page_table spt;
@@ -125,6 +143,7 @@ struct thread {
 	struct intr_frame tf;               /* Information for switching */
 	unsigned magic;                     /* Detects stack overflow. */
 };
+
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
@@ -159,6 +178,9 @@ int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
 void do_iret (struct intr_frame *tf);
+
+
+
 
 // synch.c에서 호출할 수 있도록 헤더에 프로토타입을 선언한다.
 void thread_recalculate_priority(struct thread *t);

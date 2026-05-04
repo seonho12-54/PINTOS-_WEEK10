@@ -29,6 +29,9 @@ static void initd (void *f_name);
 static void __do_fork (void *);
 
 
+
+
+
 /* General process initializer for initd and other process. */
 static void
 process_init (void) {
@@ -229,8 +232,14 @@ initd (void *f_name) {
 tid_t
 process_fork (const char *name, struct intr_frame *if_ UNUSED) {
 	/* Clone current thread to new thread.*/
+
+
+	
 	return thread_create (name,
 			PRI_DEFAULT, __do_fork, thread_current ());
+
+
+
 }
 
 #ifndef VM
@@ -436,6 +445,9 @@ process_wait (tid_t child_tid UNUSED) {
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
+
+
+
     for (int i = 0; i < 1000; i++) {
         thread_yield();
     }

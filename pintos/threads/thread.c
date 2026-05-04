@@ -167,6 +167,7 @@ thread_init (void) {
 	init_thread (initial_thread, "main", PRI_DEFAULT);
 	initial_thread->status = THREAD_RUNNING;
 	initial_thread->tid = allocate_tid ();
+
 }
 
 /* Starts preemptive thread scheduling by enabling interrupts.
@@ -490,8 +491,19 @@ init_thread (struct thread *t, const char *name, int priority) {
 	t->wait_on_lock = NULL;
 	list_init(&t->donation_candidates); // donation 리스트를 초기화한다.
 	// in_donation_list를 false로 초기화한다.
+
+
+
 	t->in_donation_list = false;
+
+#ifdef USERPROG
+    list_init(&t->children);
+    t->my_status = NULL;
+    t->exit_status = 0;
+#endif
 }
+
+
 
 /* Chooses and returns the next thread to be scheduled.  Should
    return a thread from the run queue, unless the run queue is
