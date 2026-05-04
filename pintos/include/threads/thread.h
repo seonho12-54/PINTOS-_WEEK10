@@ -5,10 +5,10 @@
 #include <list.h>
 #include <stdint.h>
 #include "threads/interrupt.h"
-
 #ifdef VM
 #include "vm/vm.h"
 #endif
+#include "threads/synch.h"
 
 
 /* States in a thread's life cycle. */
@@ -19,17 +19,37 @@ enum thread_status {
 	THREAD_DYING        /* About to be destroyed. */
 };
 
+
 /* Thread identifier type.
    You can redefine this to whatever type you like. */
 typedef int tid_t;
-#define TID_ERROR ((tid_t) -1)          /* Error value for tid_t. */
+#define TID_ERROR ((tid_t) -1)
+        /* Error value for tid_t. */
+
+#ifndef ARG_MAX
+#define ARG_MAX 128
+#endif
+
+struct child_status {
+    tid_t tid;
+    int exit_status;
+    bool waited;
+    bool exited;
+
+	bool fork_success;
+    struct semaphore fork_sema;
+
+    struct semaphore wait_sema;
+    struct list_elem elem;
+};
+
+
 
 /* Thread priorities. */
 #define PRI_MIN 0                       /* Lowest priority. */
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
 
-#define ARG_MAX 128 
 /* A kernel thread or user process.
  *
  * Each thread structure is stored in its own 4 kB page.  The
@@ -111,19 +131,18 @@ struct thread {
 	// donation 리스트 연결용 전용 노드 필드(donation_elem)를 둔다.
 	struct list_elem donation_elem;
 
-	// file pointers를 저장할 fd_table
-	struct file* fd_table[ARG_MAX];
-
-	// auto-increment를 저장하기 위한 next_fd 
-	int next_fd; 
-	
 	// donation 리스트 등록 상태 추적 플래그(in_donation_list)를 둔다.
 	bool in_donation_list;
-
 #ifdef USERPROG
-	/* Owned by userprog/process.c. */
-	uint64_t *pml4;                     /* Page map level 4 */
+    uint64_t *pml4;
+    struct file *fd_table[ARG_MAX];
+    int next_fd;
+    struct list children;
+    struct child_status *my_status;
+    int exit_status;
+	struct file *running_file;
 #endif
+
 #ifdef VM
 	/* Table for whole virtual memory owned by thread. */
 	struct supplemental_page_table spt;
@@ -133,6 +152,7 @@ struct thread {
 	struct intr_frame tf;               /* Information for switching */
 	unsigned magic;                     /* Detects stack overflow. */
 };
+
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
@@ -167,6 +187,9 @@ int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
 void do_iret (struct intr_frame *tf);
+
+
+
 
 // synch.c에서 호출할 수 있도록 헤더에 프로토타입을 선언한다.
 void thread_recalculate_priority(struct thread *t);
