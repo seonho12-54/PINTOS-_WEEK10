@@ -5,6 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 #include "threads/interrupt.h"
+
 #ifdef VM
 #include "vm/vm.h"
 #endif
@@ -111,6 +112,9 @@ struct thread {
 
 	// donation 리스트 등록 상태 추적 플래그(in_donation_list)를 둔다.
 	bool in_donation_list;
+
+	// fd와 파일 포인터 매핑을 위한 fd_table 
+	// struct file* fd_table[ARG_MAX];
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
