@@ -33,6 +33,10 @@ struct child_status {
     int exit_status;
     bool waited;
     bool exited;
+
+	bool fork_success;
+    struct semaphore fork_sema;
+
     struct semaphore wait_sema;
     struct list_elem elem;
 };

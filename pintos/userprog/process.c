@@ -279,6 +279,10 @@ process_fork (const char *name, struct intr_frame *if_ UNUSED) {
      */
     cs->exited = false;
 
+	// fork 성공 여부를 추적하는 필드를 false로 초기화한다.
+	cs->fork_success = false;
+	sema_init (&cs->fork_sema, 0);
+
 	/*
      * 부모가 wait()에서 잠들 때 사용할 세마포어다.
      * 0으로 시작해야 sema_down()을 호출한 부모가 잠든다.
@@ -288,7 +292,6 @@ process_fork (const char *name, struct intr_frame *if_ UNUSED) {
 
     struct fork_args *args = palloc_get_page (0);
     if (args == NULL) {
-        list_remove (&cs->elem);
         palloc_free_page (cs);
         return TID_ERROR;
     }
@@ -325,6 +328,7 @@ process_fork (const char *name, struct intr_frame *if_ UNUSED) {
     if (tid == TID_ERROR) {
         list_remove (&cs->elem);
         palloc_free_page (cs);
+		palloc_free_page (args);
         return TID_ERROR;
     }
 
@@ -333,6 +337,17 @@ process_fork (const char *name, struct intr_frame *if_ UNUSED) {
      * 기록부에 진짜 자식 tid를 저장한다.
      */
     cs->tid = tid;
+
+
+	//성공을 했으니  세마 다운해야한다 부모를 다운하고 자식을 살린다.
+	sema_down (&cs->fork_sema);
+
+	if (!cs->fork_success) {
+		list_remove (&cs->elem);
+		palloc_free_page (cs);
+		return TID_ERROR;
+	}
+
 
     /*
      * 부모에게는 fork의 반환값으로 자식 tid를 돌려준다.
@@ -353,22 +368,34 @@ duplicate_pte (uint64_t *pte, void *va, void *aux) {
 	void *newpage;
 	bool writable;
 
-	/* 1. TODO: If the parent_page is kernel page, then return immediately. */
 
-	/* 2. Resolve VA from the parent's page map level 4. */
+	/*
+     * pml4_for_each는 kernel page도 볼 수 있으니,
+     * kernel address면 복사하지 않고 넘어간다.
+     */
+    if (is_kernel_vaddr (va))
+        return true;
+
+
+	//부모의 va가 실제로 어떤 물리 페이지에 매핑되어 있는지 찾는다.
 	parent_page = pml4_get_page (parent->pml4, va);
+	if (parent_page == NULL)
+			return false;
+	
 
-	/* 3. TODO: Allocate new PAL_USER page for the child and set result to
-	 *    TODO: NEWPAGE. */
+	//자식에게 줄 페이지를 할당한다.
+	newpage = palloc_get_page (PAL_USER);
+    if (newpage == NULL)
+        return false;
+	//부모 페이지  그대로 복사한다.
+	 memcpy (newpage, parent_page, PGSIZE);
 
-	/* 4. TODO: Duplicate parent's page to the new page and
-	 *    TODO: check whether parent's page is writable or not (set WRITABLE
-	 *    TODO: according to the result). */
-
-	/* 5. Add new page to child's page table at address VA with WRITABLE
-	 *    permission. */
+	 //부모페이지가 쓸 수 있는지 권한을 확인합니다.
+	 writable = is_writable (pte);
+	
 	if (!pml4_set_page (current->pml4, va, newpage, writable)) {
-		/* 6. TODO: if fail to insert page, do error handling. */
+		palloc_free_page (newpage);
+        return false;
 	}
 	return true;
 }
@@ -418,11 +445,17 @@ __do_fork (void *aux) {
 
 	process_init ();
 
+	cs->fork_success = true; //복사를 성공하면 부모 프로세스를 꺠웁니다.
+	sema_up (&cs->fork_sema);
+
 	/* Finally, switch to the newly created process. */
-	if (succ)
+	if (succ){
 	    palloc_free_page (args);
 		do_iret (&if_);
-error:
+	}
+	error:
+	cs->fork_success = false;
+	sema_up (&cs->fork_sema);
 	palloc_free_page (args);
 	thread_exit ();
 }
@@ -555,12 +588,38 @@ process_wait (tid_t child_tid UNUSED) {
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
 
+	 struct thread *curr = thread_current(); // wait를 호출한 프로세스가 부모이다.
+	 struct child_status *target = NULL;// 자식을 아직 못찾았으니 NULL 로 초기화
 
 
-    for (int i = 0; i < 1000; i++) {
-        thread_yield();
-    }
-    return -1;
+	 for (struct list_elem *e = list_begin(&curr->children);
+		  e != list_end(&curr->children);
+		  e = list_next(e)) {
+
+			//elem으로 자식 존재를 알 수 없다. 따라서 안에 있는 구조체를 꺼낸다.
+			struct child_status *cs = list_entry(e, struct child_status, elem);
+
+			if (cs->tid == child_tid) {
+				target = cs;
+				break;
+			}
+		}
+			if (target == NULL)
+				 exit(-1);
+			if(target->waited)
+				exit(-1);
+			target->waited = true;
+			if (!target ->exited)
+				sema_down (&target->wait_sema);
+			
+			int status = target->exit_status;
+			// 여기까지 왔으면 이미 자식은 종료상태 부모는 깨어남ㄴ
+			list_remove (&target->elem);
+			 palloc_free_page (target);
+			 return status;
+
+
+	 
 }
 
 /* Exit the process. This function is called by thread_exit (). */
@@ -571,6 +630,13 @@ process_exit (void) {
 	 * TODO: Implement process termination message (see
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
+	
+	if (curr->my_status != NULL) {
+    curr->my_status->exit_status = curr->exit_status;
+    curr->my_status->exited = true;
+    sema_up (&curr->my_status->wait_sema);
+}
+
 
 	process_cleanup ();
 }

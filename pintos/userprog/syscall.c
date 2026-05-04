@@ -9,6 +9,7 @@
 #include "lib/kernel/console.h"
 #include "intrinsic.h"
 #include "lib/kernel/stdio.h"
+#include "userprog/process.h"
 #include <string.h>
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
@@ -52,6 +53,10 @@ static int sys_write(int fd, const void *buffer, unsigned size) {
 
 static void
 sys_exit(int status) {
+
+
+	struct thread *curr = thread_current ();
+    curr->exit_status = status;
     printf("%s: exit(%d)\n", thread_current()->name, status);
     thread_exit();
 }
@@ -69,7 +74,13 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			f->R.rax = sys_write(f->R.rdi, f->R.rsi, f->R.rdx);	
 			break; 			
 		case SYS_EXIT:
-			sys_exit(f->R.rdi);				
+			sys_exit(f->R.rdi);		
+		case SYS_WAIT:
+			f->R.rax = process_wait ((tid_t) f->R.rdi);
+			break;	
+		case SYS_FORK:
+			f->R.rax = process_fork ((const char *) f->R.rdi, f);
+			break;	
 	}
 
 
