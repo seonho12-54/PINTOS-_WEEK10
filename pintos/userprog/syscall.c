@@ -41,9 +41,9 @@ static void sys_halt(void);
 void sys_exit(int status);
 
 // 기본 헬퍼 함수
-static struct file* find_file_by_fd(int fd); 
-static bool file_name_is_empty(const char* file); 
-static bool file_name_is_too_long(const char* file);
+static struct file *find_file_by_fd(int fd);
+static bool file_name_is_empty(const char *file);
+static bool file_name_is_too_long(const char *file);
 
 // 유저 메모리 유효성 검사 함수
 static void fail_invalid_user_memory(void);
@@ -78,7 +78,6 @@ void syscall_init(void)
 			  FLAG_IF | FLAG_TF | FLAG_DF | FLAG_IOPL | FLAG_AC | FLAG_NT);
 }
 
-
 static bool
 file_name_is_empty(const char *file)
 {
@@ -91,11 +90,11 @@ file_name_is_too_long(const char *file)
 	return strlen(file) > NAME_MAX;
 }
 
-
 // 유저 메모리 유효성 검사 함수들
 // 실패 종료 경로 함수
 static void
-fail_invalid_user_memory(void) {
+fail_invalid_user_memory(void)
+{
 	// 잘못된 사용자 메모리는 현재 프로세스를 exit(-1)로 종료한다.
 	// validate_*() 계열 helper의 공통 실패 경로로 사용한다.
 	// 호출 이후 정상 syscall 반환값을 만들지 않는다.
@@ -104,22 +103,26 @@ fail_invalid_user_memory(void) {
 
 // 접근 가능한 사용자 주소인지 판별하는 함수
 static bool
-is_valid_user_ptr(const void *uaddr) {
+is_valid_user_ptr(const void *uaddr)
+{
 
 	// NULL 포인터를 실패 처리한다.
-	if(uaddr == NULL){
+	if (uaddr == NULL)
+	{
 		user_mem_debug("invalid user ptr: NULL\n");
 		return false;
 	}
 
 	// is_user_vaddr()로 커널 주소를 차단한다.
-	if(!is_user_vaddr((void *) uaddr)){
+	if (!is_user_vaddr((void *)uaddr))
+	{
 		user_mem_debug("invalid user ptr: kernel addr %p\n", uaddr);
 		return false;
 	}
 
 	// 현재 thread의 page table에서 매핑 여부를 확인한다.
-	if(pml4_get_page(thread_current()->pml4, (void *) uaddr) == NULL){
+	if (pml4_get_page(thread_current()->pml4, (void *)uaddr) == NULL)
+	{
 		user_mem_debug("invalid user ptr: unmapped %p\n", uaddr);
 		return false;
 	}
@@ -127,56 +130,65 @@ is_valid_user_ptr(const void *uaddr) {
 	return true;
 }
 
-//단일 포인터 검증 함수
+// 단일 포인터 검증 함수
 static void
-validate_user_ptr(const void *uaddr) {
+validate_user_ptr(const void *uaddr)
+{
 
 	// 규칙 1: 내부 판별은 is_valid_user_ptr()에 위임한다.
-	if (!is_valid_user_ptr(uaddr)) {
+	if (!is_valid_user_ptr(uaddr))
+	{
 		// 실패 시 fail_invalid_user_memory()를 호출한다.
 		fail_invalid_user_memory();
 	}
 }
 
 static void
-validate_user_buffer(const void *buffer, size_t size) {
+validate_user_buffer(const void *buffer, size_t size)
+{
 	// size == 0은 빈 범위로 처리한다.
-	if (size == 0) {
+	if (size == 0)
+	{
 		return;
 	}
 	// 시작 주소를 검증한다.
 	validate_user_ptr(buffer);
 	// buffer가 가리키는 메모리 범위의 마지막 바이트도 유효한 사용자 주소인지 확인한다
-	validate_user_ptr((const uint8_t *) buffer + size - 1);
+	validate_user_ptr((const uint8_t *)buffer + size - 1);
 
 	for (const uint8_t *page = pg_round_down(buffer);
-		 page <= (const uint8_t *) pg_round_down((const uint8_t *) buffer + size - 1);
-		 page += PGSIZE) {
+		 page <= (const uint8_t *)pg_round_down((const uint8_t *)buffer + size - 1);
+		 page += PGSIZE)
+	{
 		validate_user_ptr(page);
 	}
 }
 
 static void
-validate_user_string(const char *str) {
+validate_user_string(const char *str)
+{
 	// 규칙 1: 시작 주소뿐 아니라 각 문자 위치를 검증한다.
 	validate_user_ptr(str);
 
 	// 규칙 2: NUL 종료를 발견하면 검증을 종료한다.
-	while (true) {
+	while (true)
+	{
 		validate_user_ptr(str);
-		if (*str == '\0') {
+		if (*str == '\0')
+		{
 			return;
 		}
 		str++;
 	}
 }
 
-// 기본 헬퍼 함수 
-static struct file* find_file_by_fd(int fd) {
-	struct file* file; 
-	struct thread* curr_thread = thread_current();
+// 기본 헬퍼 함수
+static struct file *find_file_by_fd(int fd)
+{
+	struct file *file;
+	struct thread *curr_thread = thread_current();
 
-	return curr_thread->fd_table[fd]; 
+	return curr_thread->fd_table[fd];
 }
 
 static int sys_write(int fd, const void *buffer, unsigned size)
@@ -190,7 +202,7 @@ static int sys_write(int fd, const void *buffer, unsigned size)
 	}
 	if (fd <= 0)
 		return -1;
-	if (fd>= ARG_MAX)
+	if (fd >= ARG_MAX)
 		return -1;
 
 	validate_user_buffer(buffer, size);
@@ -207,12 +219,9 @@ static int sys_write(int fd, const void *buffer, unsigned size)
 static int sys_read(int fd, void *buffer, unsigned size)
 {
 	struct file *file;
-
+	validate_user_buffer(buffer, size);
 	if (size == 0)
 		return 0;
-
-	validate_user_buffer(buffer, size);
-
 	if (fd == 1)
 		return -1;
 	if (fd < 0)
@@ -246,27 +255,28 @@ sys_open(const char *file_name)
 		sys_exit(-1);
 	}
 
-	validate_user_string(file_name); 
+	validate_user_string(file_name);
 
-	if (file_name_is_empty(file_name)) {
-    	return -1;
+	if (file_name_is_empty(file_name))
+	{
+		return -1;
 	}
 
 	// sys_open이 filesys_open(file_name)을 호출
 	// filesys_open이 디렉터리에서 파일 이름을 찾고 inode를 얻음
 	// filesys_open 내부에서 file_open(inode) 호출
 	// file_open이 struct file * 객체를 만들어 반환
-	struct file* file = filesys_open(file_name); 
+	struct file *file = filesys_open(file_name);
 
-	// open-missing 테스트 
-	if (file == NULL) {
-		return -1; 
+	// open-missing 테스트
+	if (file == NULL)
+	{
+		return -1;
 	}
 
-	struct thread *curr_thread = thread_current(); 
+	struct thread *curr_thread = thread_current();
 
 	curr_thread->fd_table[curr_thread->next_fd] = file;
-
 	return curr_thread->next_fd++;
 }
 
@@ -276,9 +286,11 @@ void sys_exit(int status)
 	thread_exit();
 }
 
-static bool 
-sys_create(const char *file, unsigned initial_size) {
-	if (!is_valid_user_ptr(file)) {
+static bool
+sys_create(const char *file, unsigned initial_size)
+{
+	if (!is_valid_user_ptr(file))
+	{
 		sys_exit(-1);
 	}
 
