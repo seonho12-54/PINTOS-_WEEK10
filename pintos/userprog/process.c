@@ -27,7 +27,6 @@
 
 
 static void process_cleanup (void);
-static void close_running_file (struct thread *t);
 static bool load (const char *file_name, struct intr_frame *if_);
 static void initd (void *f_name);
 static void __do_fork (void *);
@@ -38,6 +37,20 @@ struct fork_args {
     struct child_status *child_status;
     struct intr_frame parent_if;
 };
+
+static void
+child_status_release (struct child_status *cs) {
+	bool should_free = false;
+
+	lock_acquire (&cs->ref_lock);
+	cs->ref_count--;
+	if (cs->ref_count == 0)
+		should_free = true;
+	lock_release (&cs->ref_lock);
+
+	if (should_free)
+		palloc_free_page (cs);
+}
 
 static bool
 duplicate_fd_table (struct thread *parent, struct thread *child) {
@@ -62,26 +75,6 @@ duplicate_fd_table (struct thread *parent, struct thread *child) {
 
     return true;
 }
-
-static bool
-duplicate_running_file (struct thread *parent, struct thread *child) {
-    if (parent->running_file == NULL)
-        return true;
-
-    child->running_file = file_duplicate (parent->running_file);
-    return child->running_file != NULL;
-}
-
-static void
-close_running_file (struct thread *t) {
-	if (t->running_file == NULL)
-		return;
-
-	file_close (t->running_file);
-	t->running_file = NULL;
-}
-
-
 
 /* General process initializer for initd and other process. */
 static void
@@ -331,6 +324,8 @@ process_fork (const char *name, struct intr_frame *if_ UNUSED) {
 	// fork 성공 여부를 추적하는 필드를 false로 초기화한다.
 	cs->fork_success = false;
 	sema_init (&cs->fork_sema, 0);
+	cs->ref_count = 2;
+	lock_init (&cs->ref_lock);
 
 	/*
      * 부모가 wait()에서 잠들 때 사용할 세마포어다.
@@ -393,7 +388,7 @@ process_fork (const char *name, struct intr_frame *if_ UNUSED) {
 
 	if (!cs->fork_success) {
 		list_remove (&cs->elem);
-		palloc_free_page (cs);
+		child_status_release (cs);
 		return TID_ERROR;
 	}
 
@@ -493,8 +488,6 @@ __do_fork (void *aux) {
 	 * TODO:       the resources of parent.*/
 	if (!duplicate_fd_table (parent, current))
 		goto error;
-	if (!duplicate_running_file (parent, current))
-		goto error;
 
 	process_init ();
 
@@ -580,7 +573,6 @@ process_exec (void *f_name) {
 	_if.eflags = FLAG_IF | FLAG_MBS;
 
 	/* We first kill the current context */
-	close_running_file (thread_current ());
 	process_cleanup ();
 	
 	// TODO: Argument 분리해서 파일명만 load()로 넘기기 
@@ -671,7 +663,7 @@ process_wait (tid_t child_tid UNUSED) {
 			int status = target->exit_status;
 			// 여기까지 왔으면 이미 자식은 종료상태 부모는 깨어남ㄴ
 			list_remove (&target->elem);
-			 palloc_free_page (target);
+			 child_status_release (target);
 			 return status;
 
 
@@ -682,19 +674,18 @@ process_wait (tid_t child_tid UNUSED) {
 void
 process_exit (void) {
 	struct thread *curr = thread_current ();
-	/* TODO: Your code goes here.
-	 * TODO: Implement process termination message (see
-	 * TODO: project2/process_termination.html).
-	 * TODO: We recommend you to implement process resource cleanup here. */
-	
-
-	close_running_file (curr);
-
-
 	if (curr->my_status != NULL) {
 		curr->my_status->exit_status = curr->exit_status;
 		curr->my_status->exited = true;
 		sema_up (&curr->my_status->wait_sema);
+		child_status_release (curr->my_status);
+		curr->my_status = NULL;
+	}
+
+	while (!list_empty (&curr->children)) {
+		struct list_elem *e = list_pop_front (&curr->children);
+		struct child_status *cs = list_entry (e, struct child_status, elem);
+		child_status_release (cs);
 	}
 
 	for (int fd = 2; fd < ARG_MAX; fd++) {
@@ -831,7 +822,6 @@ load (const char *file_name, struct intr_frame *if_) {
 		printf ("load: %s: open failed\n", file_name);
 		goto done;
 	}
-	file_deny_write (file);
 
 	/* Read and verify executable header. */
 	if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
@@ -912,9 +902,7 @@ load (const char *file_name, struct intr_frame *if_) {
 	success = true;
 
 done:
-    if (success) {
-		t->running_file = file;  // ← 추가 필요
-	} else if (file != NULL) {
+	if (file != NULL) {
 		file_close (file);
 	}
 	return success;

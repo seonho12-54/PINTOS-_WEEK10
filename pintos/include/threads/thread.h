@@ -40,6 +40,8 @@ struct child_status {
     struct semaphore fork_sema;
 
     struct semaphore wait_sema;
+    int ref_count;
+    struct lock ref_lock;
     struct list_elem elem;
 };
 
@@ -140,7 +142,6 @@ struct thread {
     struct list children;
     struct child_status *my_status;
     int exit_status;
-	struct file *running_file;
 #endif
 
 #ifdef VM

@@ -501,7 +501,6 @@ init_thread (struct thread *t, const char *name, int priority) {
     for (int i = 0; i < ARG_MAX; i++) {
         t->fd_table[i] = NULL;
     }
-	t->running_file = NULL; // 실행 중인 파일 포인터를 NULL로 초기화한다.
     list_init(&t->children);
     t->my_status = NULL;
     t->exit_status = 0;

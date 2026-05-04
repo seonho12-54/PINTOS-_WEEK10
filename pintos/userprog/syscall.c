@@ -25,6 +25,8 @@
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
 
+struct lock filesys_lock;
+
 static int sys_exec (const char *cmd_line); // 실행파일 선언
 static void sys_halt (void);
 void sys_exit (int status);
@@ -72,6 +74,7 @@ sys_exec (const char *cmd_line) {
 
 void
 syscall_init (void) {
+	lock_init (&filesys_lock);
 	write_msr (MSR_STAR, ((uint64_t) SEL_UCSEG - 0x10) << 48 |
 			((uint64_t) SEL_KCSEG) << 32);
 	write_msr (MSR_LSTAR, (uint64_t) syscall_entry);
@@ -172,12 +175,13 @@ void
 sys_exit (int status) {
 	struct thread *curr = thread_current ();
 	curr->exit_status = status;
-	printf ("%s: exit(%d)\n", curr->name, status);
 	thread_exit ();
 }
 
 static bool
 sys_create (const char *file, unsigned initial_size) {
+	bool success;
+
 	validate_user_string (file);
 
 	if (file_name_is_empty (file))
@@ -185,11 +189,16 @@ sys_create (const char *file, unsigned initial_size) {
 	if (file_name_is_too_long (file))
 		return false;
 
-	return filesys_create (file, initial_size);
+	lock_acquire (&filesys_lock);
+	success = filesys_create (file, initial_size);
+	lock_release (&filesys_lock);
+	return success;
 }
 
 static bool
 sys_remove (const char *file) {
+	bool success;
+
 	validate_user_string (file);
 
 	if (file_name_is_empty (file))
@@ -197,7 +206,10 @@ sys_remove (const char *file) {
 	if (file_name_is_too_long (file))
 		return false;
 
-	return filesys_remove (file);
+	lock_acquire (&filesys_lock);
+	success = filesys_remove (file);
+	lock_release (&filesys_lock);
+	return success;
 }
 
 static int
@@ -209,13 +221,18 @@ sys_open (const char *file_name) {
 	if (file_name_is_empty (file_name))
 		return -1;
 
+	lock_acquire (&filesys_lock);
 	file = filesys_open (file_name);
+	lock_release (&filesys_lock);
 	if (file == NULL)
 		return -1;
 
 	fd = fd_alloc (file);
-	if (fd == -1)
+	if (fd == -1) {
+		lock_acquire (&filesys_lock);
 		file_close (file);
+		lock_release (&filesys_lock);
+	}
 	return fd;
 }
 
@@ -224,7 +241,11 @@ sys_filesize (int fd) {
 	struct file *file = find_file_by_fd (fd);
 	if (file == NULL)
 		return -1;
-	return file_length (file);
+
+	lock_acquire (&filesys_lock);
+	int length = file_length (file);
+	lock_release (&filesys_lock);
+	return length;
 }
 
 static int
@@ -245,7 +266,11 @@ sys_read (int fd, void *buffer, unsigned size) {
 	struct file *file = find_file_by_fd (fd);
 	if (file == NULL)
 		return -1;
-	return file_read (file, buffer, size);
+
+	lock_acquire (&filesys_lock);
+	int bytes_read = file_read (file, buffer, size);
+	lock_release (&filesys_lock);
+	return bytes_read;
 }
 
 static int
@@ -262,7 +287,11 @@ sys_write (int fd, const void *buffer, unsigned size) {
 	struct file *file = find_file_by_fd (fd);
 	if (file == NULL)
 		return -1;
-	return file_write (file, buffer, size);
+
+	lock_acquire (&filesys_lock);
+	int bytes_written = file_write (file, buffer, size);
+	lock_release (&filesys_lock);
+	return bytes_written;
 }
 
 static void
@@ -271,7 +300,9 @@ sys_seek (int fd, unsigned position) {
 	if (file == NULL)
 		return;
 
+	lock_acquire (&filesys_lock);
 	file_seek (file, position);
+	lock_release (&filesys_lock);
 }
 
 static unsigned
@@ -280,7 +311,10 @@ sys_tell (int fd) {
 	if (file == NULL)
 		return (unsigned) -1;
 
-	return file_tell (file);
+	lock_acquire (&filesys_lock);
+	unsigned position = file_tell (file);
+	lock_release (&filesys_lock);
+	return position;
 }
 
 static void
@@ -291,7 +325,9 @@ sys_close (int fd) {
 	if (file == NULL)
 		return;
 
+	lock_acquire (&filesys_lock);
 	file_close (file);
+	lock_release (&filesys_lock);
 	curr->fd_table[fd] = NULL;
 }
 
