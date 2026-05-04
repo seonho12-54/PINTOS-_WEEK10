@@ -107,32 +107,72 @@ flowchart LR
 - 위치: `pintos/include/threads/interrupt.h`의 `struct intr_frame`
 
 ## 5. 구현 주석 (위치별 정리)
-### 5.1 `syscall_handler()`
+### 5.1 `syscall_handler()`의 syscall number 읽기
 - 위치: `pintos/userprog/syscall.c`
-- 역할: syscall 진입점에서 number를 읽고 dispatch한다.
-- 규칙 1: syscall number를 User Memory Access helper로 안전하게 읽는다.
-- 규칙 2: 지원하지 않는 syscall은 프로세스 종료로 처리한다.
-- 규칙 3: 반환값이 있는 syscall은 `f->R.rax`에 기록한다.
-- 금지 1: 사용자 스택을 검증 없이 직접 역참조하지 않는다.
+- 역할: syscall 진입점에서 `f->R.rax`의 syscall number를 읽고 분기한다.
+- 규칙 1: x86-64 syscall 경로에서는 syscall number를 사용자 스택이 아니라 `struct intr_frame *f`의 `RAX`에서 읽는다.
+- 규칙 2: `f == NULL`인 경로는 정상 syscall 진입이 아니므로 방어하거나 도달하지 않는다고 가정한다.
+- 규칙 3: 지원하지 않는 syscall 번호는 팀 계약대로 `exit(-1)` 또는 실패 반환으로 통일한다.
+- 금지 1: syscall number를 얻기 위해 사용자 주소를 직접 역참조하지 않는다.
 
 구현 체크 순서:
-1. syscall number 읽기 경로를 정리한다.
-2. syscall number switch/case를 구성한다.
-3. syscall별 인자 읽기와 구현 호출을 연결한다.
-4. 반환값 기록 또는 종료 정책을 명확히 한다.
+1. `uint64_t syscall_no = f->R.rax` 형태로 번호를 읽는다.
+2. `switch (syscall_no)` 또는 dispatch table을 구성한다.
+3. 각 case에서 필요한 레지스터 인자만 꺼낸다.
+4. 반환값이 있는 case는 `f->R.rax`에 결과를 기록한다.
+5. default case의 실패 정책을 고정한다.
 
-### 5.2 syscall별 인자 helper
-- 위치: `pintos/userprog/syscall.c`
-- 역할: syscall별 인자 개수와 타입 해석을 일관되게 관리한다.
-- 규칙 1: 인자 주소 검증은 User Memory Access helper에 위임한다.
-- 규칙 2: syscall별 인자 개수만큼만 읽는다.
-- 규칙 3: 포인터 인자는 안전 복사 후 syscall 구현에 전달한다.
-- 금지 1: bad pointer 처리 설명을 syscall 정책 문서에 중복 구현하지 않는다.
+### 5.2 `struct intr_frame` 레지스터 인자 매핑
+- 위치: `pintos/include/threads/interrupt.h`의 `struct intr_frame`, `pintos/userprog/syscall.c`
+- 역할: syscall별 인자를 x86-64 호출 규약에 맞게 레지스터에서 읽는다.
+- 규칙 1: 1번째 인자는 `f->R.rdi`, 2번째는 `f->R.rsi`, 3번째는 `f->R.rdx`에서 읽는다.
+- 규칙 2: 4번째 이후 인자가 필요한 syscall은 PintOS에서 제공한 syscall ABI 문서와 레지스터 필드를 확인해 추가한다.
+- 규칙 3: 정수 인자는 필요한 C 타입으로 명시 캐스팅하고, 포인터 인자는 사용 전 User Memory Access helper로 검증한다.
+- 금지 1: Project 2 x86-64 코드에서 32-bit PintOS처럼 사용자 스택에서 syscall 인자를 꺼내지 않는다.
 
 구현 체크 순서:
-1. syscall별 인자 개수를 표로 정리한다.
-2. 인자 읽기 helper를 통해 값을 얻는다.
-3. 포인터 인자는 검증/복사된 커널 값을 사용한다.
+1. syscall 번호별 인자 개수와 타입을 표로 정리한다.
+2. 각 case에서 `rdi/rsi/rdx`를 해당 타입으로 변환한다.
+3. 포인터 의미를 가진 인자는 syscall 구현 함수 안에서 검증하도록 넘긴다.
+
+### 5.3 포인터 인자 검증 연결
+- 위치: `pintos/userprog/syscall.c`
+- 역할: syscall handler에서 받은 포인터 인자를 실제 사용 전에 User Memory Access 정책으로 통과시킨다.
+- 규칙 1: `buffer`, `file`, `cmd_line` 등 사용자 포인터는 커널이 읽거나 쓰기 전에 검증한다.
+- 규칙 2: 문자열 인자는 문자열 검증 helper, 버퍼 인자는 크기 기반 버퍼 검증 helper를 사용한다.
+- 규칙 3: 검증 실패는 해당 helper의 계약대로 `exit(-1)` 등 공통 실패 경로로 연결한다.
+- 금지 1: handler에서 레지스터 값을 포인터로 캐스팅한 직후 바로 `strlen`, `memcpy`, `filesys_*`에 넘기지 않는다.
+- 금지 2: bad pointer 처리 본문을 syscall마다 복붙하지 않는다.
+
+구현 체크 순서:
+1. 포인터 인자를 받는 syscall 목록을 표시한다.
+2. 각 syscall 구현 함수 첫 부분에서 검증 helper를 호출한다.
+3. 검증 이후에만 파일 시스템 함수나 `putbuf`/`file_read` 같은 실제 사용 경로로 진입한다.
+
+### 5.4 syscall 구현 함수와 `RAX` 반환 기록
+- 위치: `pintos/include/threads/interrupt.h`의 `struct intr_frame`, `pintos/userprog/syscall.c`의 syscall 완료 지점
+- 역할: 반환값이 있는 syscall은 사용자가 보는 `f->R.rax`를 항상 일관되게 갱신한다.
+- 규칙 1: `read`, `write`, `open`, `filesize`, `tell`, `wait`, `fork`, `exec`처럼 반환값이 있는 syscall은 handler case에서 `f->R.rax = result`를 수행한다.
+- 규칙 2: `exit`처럼 프로세스를 종료하는 syscall은 정상 반환하지 않으므로 RAX 설정에 의존하지 않는다.
+- 규칙 3: `halt`처럼 돌아오지 않는 syscall은 shutdown 경로로 바로 연결한다.
+- 금지 1: syscall 구현이 return했는데 handler가 RAX를 설정하지 않아 임의 값이 남는 경우를 두지 않는다.
+
+구현 체크 순서:
+1. syscall별 “RAX 설정 필요 여부”를 표로 만든다.
+2. handler 마지막에 공통으로 RAX를 다룰지, 각 syscall이 직접 쓸지 팀 규칙을 고정한다.
+3. `read`/`write` 반환 바이트 수 등 테스트 민감 syscall부터 확인한다.
+
+### 5.5 unsupported syscall default 경로
+- 위치: `pintos/userprog/syscall.c`의 `syscall_handler()` default case
+- 역할: 구현하지 않은 syscall 번호를 만났을 때 커널 panic이나 임의 반환 없이 정해진 실패 경로로 보낸다.
+- 규칙 1: 테스트 정책이 “비정상 syscall은 프로세스 종료”라면 `sys_exit(-1)` 또는 공통 kill helper를 호출한다.
+- 규칙 2: 실패 반환을 택한 syscall만 `f->R.rax = -1`로 처리하고, unknown syscall과 섞지 않는다.
+- 금지 1: default case를 비워 두어 사용자 프로그램이 계속 실행되게 하지 않는다.
+
+구현 체크 순서:
+1. `switch`의 default case를 만든다.
+2. unknown syscall의 종료/반환 정책을 하나로 고정한다.
+3. 디버깅용 출력이 테스트 출력을 오염시키지 않는지 확인한다.
 
 ## 6. 테스팅 방법
 - `halt`, `exit`: 최소 syscall dispatch 확인
