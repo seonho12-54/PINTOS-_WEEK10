@@ -62,8 +62,9 @@ flowchart TD
 3. 커널 모드 fault는 사용자 입력 때문인지, 커널 버그인지 추가 판단한다.
 
 #### 구현 주석 (보면 되는 함수/구조체)
-- 위치: `pintos/userprog/exception.c`의 `page_fault()`
-- 위치: `pintos/include/threads/interrupt.h`의 `struct intr_frame`
+- `page_fault()` fault 원인과 실행 컨텍스트 분류
+- `kill()` 사용자 예외 종료 경로
+- `struct intr_frame` fault 당시 실행 모드 확인
 
 ### 4.2 기능 B: bad-read/write/jump 격리
 #### 개념 설명
@@ -85,9 +86,10 @@ sequenceDiagram
 3. 현재 프로세스의 exit status를 실패로 정리한다.
 4. 커널은 panic 없이 다음 테스트를 계속 수행한다.
 
-#### 구현 주석 (보면 되는 함수/구조체)
-- 위치: `pintos/userprog/exception.c`의 `page_fault()`
-- 위치: `pintos/tests/userprog/bad-read.c`, `bad-write.c`, `bad-jump.c`
+#### 구현 주석 (보면 되는 함수)
+- `page_fault()` invalid read/write fault 처리
+- `kill()` 사용자 프로세스 종료 처리
+- `process_exit()` 종료 상태와 자원 정리 확인
 
 ### 4.3 기능 C: syscall 중 fault와 정리 경로
 #### 개념 설명
@@ -107,14 +109,15 @@ flowchart LR
 3. 필요한 커널 자원을 정리한 뒤 프로세스 종료 경로로 이동한다.
 4. 종료 경로는 `wait-killed` 같은 프로세스 생명주기 테스트와도 일치해야 한다.
 
-#### 구현 주석 (보면 되는 함수/구조체)
-- 위치: `pintos/userprog/syscall.c`의 사용자 메모리 복사 helper
-- 위치: `pintos/userprog/process.c`의 종료/정리 경로
+#### 구현 주석 (보면 되는 함수)
+- `fail_invalid_user_memory()` syscall helper 실패 종료 경로
+- `sys_exit()` syscall 계층의 exit status 설정 경로
+- `process_exit()` 프로세스 종료 정리 경로
 
-## 5. 구현 주석 (위치별 정리)
-### 5.1 `page_fault()`
+## 5. 구현 주석 (함수 기준 정리)
+### 5.1 `page_fault()` fault 분류
 - 위치: `pintos/userprog/exception.c`
-- 역할: 잘못된 사용자 메모리 접근을 프로세스 종료로 격리한다.
+- 역할: fault 주소와 실행 컨텍스트를 보고 사용자 fault와 커널 fault를 구분한다.
 - 규칙 1: 사용자 모드 fault는 현재 프로세스를 `exit(-1)` 처리한다.
 - 규칙 2: fault 주소와 컨텍스트를 구분해 커널 버그를 숨기지 않는다.
 - 규칙 3: user memory helper 실패와 동일한 종료 정책을 유지한다.
@@ -125,18 +128,57 @@ flowchart LR
 2. 사용자 fault면 현재 프로세스 종료 경로를 호출한다.
 3. 커널 fault면 디버깅 가능한 경로로 남긴다.
 
-### 5.2 syscall 실패 정리 경로
+### 5.2 `kill()` 사용자 예외 종료 경로
+- 위치: `pintos/userprog/exception.c`
+- 역할: 사용자 프로그램에서 발생한 예외를 현재 프로세스 종료로 연결한다.
+- 규칙 1: user mode 예외는 커널 panic이 아니라 프로세스 종료로 처리한다.
+- 규칙 2: 종료 status는 `-1`로 관측되게 한다.
+- 규칙 3: `bad-read`, `bad-write`, `bad-jump`가 같은 정책을 따르게 한다.
+- 금지 1: 사용자 오류를 커널 전체 실패로 전파하지 않는다.
+
+구현 체크 순서:
+1. `intr_frame`의 실행 모드를 기준으로 사용자 예외인지 판단한다.
+2. 사용자 예외면 현재 프로세스 종료 경로를 호출한다.
+3. 커널 예외면 기존 디버깅 경로를 유지한다.
+
+### 5.3 `fail_invalid_user_memory()` syscall helper 실패 경로
 - 위치: `pintos/userprog/syscall.c`
-- 역할: 사용자 메모리 접근 실패 시 syscall을 중단하고 정리한다.
+- 역할: 사용자 메모리 helper가 실패했을 때 syscall을 중단하고 종료 정책을 적용한다.
 - 규칙 1: 실패 후 정상 반환값을 만들지 않는다.
-- 규칙 2: 잡고 있는 락이나 임시 자원이 있다면 종료 전에 정리한다.
+- 규칙 2: 잡고 있는 락이나 임시 자원이 있다면 종료 전에 정리할 수 있는 구조로 둔다.
 - 규칙 3: exit status는 `-1`로 관측되도록 한다.
 - 금지 1: 실패를 무시하고 syscall 본래 로직을 계속 진행하지 않는다.
 
 구현 체크 순서:
-1. helper 실패 시 즉시 실패 경로로 분기한다.
-2. 필요한 커널 자원을 정리한다.
+1. `validate_user_ptr()`, `validate_user_buffer()`, `validate_user_string()` 실패를 이 함수로 모은다.
+2. syscall 성공 경로로 돌아가지 않게 한다.
 3. 현재 프로세스를 `exit(-1)` 처리한다.
+
+### 5.4 `sys_exit()` syscall 종료 상태 기록
+- 위치: `pintos/userprog/syscall.c`
+- 역할: syscall 계층에서 현재 프로세스의 종료 status를 설정하고 종료한다.
+- 규칙 1: user memory 실패는 `sys_exit(-1)`과 같은 의미로 정리한다.
+- 규칙 2: 종료 메시지와 부모가 관측할 status가 일관되게 남아야 한다.
+- 규칙 3: 정상 `exit(status)`와 비정상 `exit(-1)` 경로를 구분 가능하게 유지한다.
+- 금지 1: thread 종료만 하고 exit status 갱신을 누락하지 않는다.
+
+구현 체크 순서:
+1. 인자로 받은 status를 현재 프로세스 종료 상태에 반영한다.
+2. 필요한 종료 로그를 출력한다.
+3. 프로세스 종료 정리 경로로 이동한다.
+
+### 5.5 `process_exit()` 프로세스 종료 정리
+- 위치: `pintos/userprog/process.c`
+- 역할: 종료된 사용자 프로세스의 자원과 관측 가능한 종료 상태를 정리한다.
+- 규칙 1: 비정상 종료도 정상 종료와 같은 정리 루틴을 통과한다.
+- 규칙 2: 부모가 `wait()`로 확인할 상태가 유지되어야 한다.
+- 규칙 3: page table, 파일, 실행 파일 write deny 같은 자원을 정리한다.
+- 금지 1: bad pointer 종료에서 자원 정리를 우회하지 않는다.
+
+구현 체크 순서:
+1. 종료 status가 부모에게 전달되는 경로를 확인한다.
+2. 열린 파일과 process 자원을 정리한다.
+3. page table 및 thread 자원 정리 순서를 유지한다.
 
 ## 6. 테스팅 방법
 - `bad-read`, `bad-read2`: invalid read가 커널 panic 없이 종료되는지 확인

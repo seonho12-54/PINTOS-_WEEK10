@@ -9,6 +9,7 @@
 
 - 기능 문서: `argument_passing/1. feature`
 - 테스트 문서: `argument_passing/2. testing`
+- 면접 대비: `argument_passing/3. interview`
 - 공용 템플릿: `../../1. note-templates`
 
 ---
@@ -28,6 +29,10 @@
 - `03-args-multiple.md`
 - `04-args-many.md`
 - `05-args-dbl-space.md`
+
+### interview 문서
+- `00-README.md`
+- `00-interview-script.md`
 
 ---
 
@@ -51,6 +56,16 @@
   - `2. 구현 필요 함수와 규칙`
   - `3. 실패 시 바로 확인할 것`
   - `4. 재검증`
+
+### 3.3 interview 문서 용도
+- 기준: `argument_passing/3. interview/00-interview-script.md`
+- 용도: 구현 경험을 면접에서 설명하기 위한 대본
+- 포함 내용:
+  - Q&A 형식의 10가지 핵심 질문
+  - 각 답변별 예상 시간 (30초 ~ 3분)
+  - 구체적 예시와 스택 레이아웃
+  - 자신의 버그/어려움 경험담
+  - 면접 팁과 심화 질문 대비
 
 ---
 

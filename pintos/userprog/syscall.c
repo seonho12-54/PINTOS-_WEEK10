@@ -67,13 +67,17 @@ syscall_init (void) {
 			FLAG_IF | FLAG_TF | FLAG_DF | FLAG_IOPL | FLAG_AC | FLAG_NT);
 }
 
-// 헬퍼 함수 구현부 
-static void 
+// 유저 메모리 유효성 검사 함수들
+// 실패 종료 경로 함수
+static void
 fail_invalid_user_memory(void) {
-	sys_exit(-1); 
+	// 잘못된 사용자 메모리는 현재 프로세스를 exit(-1)로 종료한다.
+	// validate_*() 계열 helper의 공통 실패 경로로 사용한다.
+	// 호출 이후 정상 syscall 반환값을 만들지 않는다.
+	sys_exit(-1);
 }
 
-
+// 접근 가능한 사용자 주소인지 판별하는 함수
 static bool
 is_valid_user_ptr(const void *uaddr) {
 
@@ -89,7 +93,6 @@ is_valid_user_ptr(const void *uaddr) {
 		return false;
 	}
 
-
 	// 현재 thread의 page table에서 매핑 여부를 확인한다.
 	if(pml4_get_page(thread_current()->pml4, (void *) uaddr) == NULL){
 		user_mem_debug("invalid user ptr: unmapped %p\n", uaddr);
@@ -99,64 +102,61 @@ is_valid_user_ptr(const void *uaddr) {
 	return true;
 }
 
+//단일 포인터 검증 함수
 static void
 validate_user_ptr(const void *uaddr) {
-    if (!is_valid_user_ptr(uaddr)) {
-        fail_invalid_user_memory();
-    }
+
+	// 규칙 1: 내부 판별은 is_valid_user_ptr()에 위임한다.
+	if (!is_valid_user_ptr(uaddr)) {
+		// 실패 시 fail_invalid_user_memory()를 호출한다.
+		fail_invalid_user_memory();
+	}
+}
+
+static void
+validate_user_buffer(const void *buffer, size_t size) {
+	// size == 0은 빈 범위로 처리한다.
+	if (size == 0) {
+		return;
+	}
+	// 시작 주소를 검증한다.
+	validate_user_ptr(buffer);
+	// buffer가 가리키는 메모리 범위의 마지막 바이트도 유효한 사용자 주소인지 확인한다
+	validate_user_ptr((const uint8_t *) buffer + size - 1);
+
+	for (const uint8_t *page = pg_round_down(buffer);
+		 page <= (const uint8_t *) pg_round_down((const uint8_t *) buffer + size - 1);
+		 page += PGSIZE) {
+		validate_user_ptr(page);
+	}
 }
 
 static void
 validate_user_string(const char *str) {
-    validate_user_ptr(str);
+	// 규칙 1: 시작 주소뿐 아니라 각 문자 위치를 검증한다.
+	validate_user_ptr(str);
 
-    while (true) {
-        validate_user_ptr(str);
-
-        if (*str == '\0') {		
-            return;
-        }
-
-        str++;
-    }
+	// 규칙 2: NUL 종료를 발견하면 검증을 종료한다.
+	while (true) {
+		validate_user_ptr(str);
+		if (*str == '\0') {
+			return;
+		}
+		str++;
+	}
 }
 
+// 시스템 콜 함수들
 
-
-static int sys_write(int fd, const void *buffer, unsigned size)
-{
-	struct file *file;
-	if (fd == 1)
-	{
+static int sys_write(int fd, const void *buffer, unsigned size) {
+	if (fd == 1) {
 		putbuf(buffer, size);
 		return size;
 	}
-
-	// fd가 2이상일때, 현재 프로세스의 fd table에서 fd에 해당하는 struct file *를 찾음 find_file_from_fd()
-	// 없으면 return -1, 있으면 파일에 입력하는 함수 호출하고, 그 함수가 입력한 사이즈를 반환.
-	// fd에 해당하는 file* 찾는 함수 호출해서 파일 가져옴
-	// 있는지 없는지 검사
-	// 있다면 파일에 입력하는 함수 호출
-	// 함수가 반환하는 사이즈 그대로 반환
-
-	if (fd >= 2)  {			
-		// file = find_file_by_fd(fd);
-		
-		if (file == NULL) {
-			return -1;
-		}
-
-		return file_write(file, buffer, size);		
-	}
-	if (fd == 0) {
-		return -1;
-	}
-	if (fd < 0){
-		return -1;
-	}
+	return 0;
 }
 
-static void
+void
 sys_exit(int status) {
     printf("%s: exit(%d)\n", thread_current()->name, status);
     thread_exit();
@@ -206,9 +206,9 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	int sys_call = f->R.rax; 
 
 	switch (sys_call) {
-		case SYS_WRITE: 
-			f->R.rax = sys_write(f->R.rdi, f->R.rsi, f->R.rdx);	
-			break; 			
+		case SYS_WRITE:
+			f->R.rax = sys_write(f->R.rdi, f->R.rsi, f->R.rdx);
+			break;
 		case SYS_EXIT:
 			sys_exit(f->R.rdi);		
 			break; 
@@ -216,6 +216,5 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			f->R.rax = sys_create(f->R.rdi, f->R.rsi); 		
 			break; 
 	}
-
 
 }
