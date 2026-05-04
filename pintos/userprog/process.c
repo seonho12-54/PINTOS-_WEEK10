@@ -27,6 +27,7 @@
 
 
 static void process_cleanup (void);
+static void close_running_file (struct thread *t);
 static bool load (const char *file_name, struct intr_frame *if_);
 static void initd (void *f_name);
 static void __do_fork (void *);
@@ -60,6 +61,24 @@ duplicate_fd_table (struct thread *parent, struct thread *child) {
     }
 
     return true;
+}
+
+static bool
+duplicate_running_file (struct thread *parent, struct thread *child) {
+    if (parent->running_file == NULL)
+        return true;
+
+    child->running_file = file_duplicate (parent->running_file);
+    return child->running_file != NULL;
+}
+
+static void
+close_running_file (struct thread *t) {
+	if (t->running_file == NULL)
+		return;
+
+	file_close (t->running_file);
+	t->running_file = NULL;
 }
 
 
@@ -474,6 +493,8 @@ __do_fork (void *aux) {
 	 * TODO:       the resources of parent.*/
 	if (!duplicate_fd_table (parent, current))
 		goto error;
+	if (!duplicate_running_file (parent, current))
+		goto error;
 
 	process_init ();
 
@@ -559,6 +580,7 @@ process_exec (void *f_name) {
 	_if.eflags = FLAG_IF | FLAG_MBS;
 
 	/* We first kill the current context */
+	close_running_file (thread_current ());
 	process_cleanup ();
 	
 	// TODO: Argument 분리해서 파일명만 load()로 넘기기 
@@ -666,10 +688,7 @@ process_exit (void) {
 	 * TODO: We recommend you to implement process resource cleanup here. */
 	
 
-	if (curr->running_file != NULL) {
-    file_close (curr->running_file);
-    curr->running_file = NULL;
-}	// 이걸 추가해야 프로세스가 끝날때 write 금지가 풀린다.
+	close_running_file (curr);
 
 
 	if (curr->my_status != NULL) {
@@ -806,12 +825,13 @@ load (const char *file_name, struct intr_frame *if_) {
 		goto done;
 	process_activate (thread_current ());
 
-	/* Open executable file. */	
+	/* Open executable file. */
 	file = filesys_open (file_name);
 	if (file == NULL) {
 		printf ("load: %s: open failed\n", file_name);
 		goto done;
 	}
+	file_deny_write (file);
 
 	/* Read and verify executable header. */
 	if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr

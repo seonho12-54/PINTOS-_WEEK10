@@ -29,12 +29,16 @@ static int sys_exec (const char *cmd_line); // 실행파일 선언
 static void sys_halt (void);
 void sys_exit (int status);
 static bool sys_create (const char *file, unsigned initial_size);
+static bool sys_remove (const char *file);
 static int sys_open (const char *file_name);
 static int sys_filesize (int fd);
 static int sys_read (int fd, void *buffer, unsigned size);
 static int sys_write (int fd, const void *buffer, unsigned size);
+static void sys_seek (int fd, unsigned position);
+static unsigned sys_tell (int fd);
 static void sys_close (int fd);
 
+static int fd_alloc (struct file *file);
 static struct file *find_file_by_fd (int fd);
 static bool file_name_is_empty (const char *file);
 static bool file_name_is_too_long (const char *file);
@@ -140,6 +144,25 @@ find_file_by_fd (int fd) {
 	return thread_current ()->fd_table[fd];
 }
 
+static int
+fd_alloc (struct file *file) {
+	struct thread *curr = thread_current ();
+
+	if (file == NULL)
+		return -1;
+
+	for (int fd = 2; fd < ARG_MAX; fd++) {
+		if (curr->fd_table[fd] == NULL) {
+			curr->fd_table[fd] = file;
+			if (fd >= curr->next_fd)
+				curr->next_fd = fd + 1;
+			return fd;
+		}
+	}
+
+	return -1;
+}
+
 static void
 sys_halt (void) {
 	power_off ();
@@ -165,23 +188,35 @@ sys_create (const char *file, unsigned initial_size) {
 	return filesys_create (file, initial_size);
 }
 
+static bool
+sys_remove (const char *file) {
+	validate_user_string (file);
+
+	if (file_name_is_empty (file))
+		return false;
+	if (file_name_is_too_long (file))
+		return false;
+
+	return filesys_remove (file);
+}
+
 static int
 sys_open (const char *file_name) {
-	struct thread *curr = thread_current ();
 	struct file *file;
+	int fd;
 
 	validate_user_string (file_name);
 	if (file_name_is_empty (file_name))
-		return -1;
-	if (curr->next_fd >= ARG_MAX)
 		return -1;
 
 	file = filesys_open (file_name);
 	if (file == NULL)
 		return -1;
 
-	curr->fd_table[curr->next_fd] = file;
-	return curr->next_fd++;
+	fd = fd_alloc (file);
+	if (fd == -1)
+		file_close (file);
+	return fd;
 }
 
 static int
@@ -231,6 +266,24 @@ sys_write (int fd, const void *buffer, unsigned size) {
 }
 
 static void
+sys_seek (int fd, unsigned position) {
+	struct file *file = find_file_by_fd (fd);
+	if (file == NULL)
+		return;
+
+	file_seek (file, position);
+}
+
+static unsigned
+sys_tell (int fd) {
+	struct file *file = find_file_by_fd (fd);
+	if (file == NULL)
+		return (unsigned) -1;
+
+	return file_tell (file);
+}
+
+static void
 sys_close (int fd) {
 	struct thread *curr = thread_current ();
 	struct file *file = find_file_by_fd (fd);
@@ -262,6 +315,9 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		case SYS_CREATE:
 			f->R.rax = sys_create ((const char *) f->R.rdi, f->R.rsi);
 			break;
+		case SYS_REMOVE:
+			f->R.rax = sys_remove ((const char *) f->R.rdi);
+			break;
 		case SYS_OPEN:
 			f->R.rax = sys_open ((const char *) f->R.rdi);
 			break;
@@ -273,6 +329,12 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			break;
 		case SYS_WRITE:
 			f->R.rax = sys_write (f->R.rdi, (const void *) f->R.rsi, f->R.rdx);
+			break;
+		case SYS_SEEK:
+			sys_seek (f->R.rdi, f->R.rsi);
+			break;
+		case SYS_TELL:
+			f->R.rax = sys_tell (f->R.rdi);
 			break;
 		case SYS_CLOSE:
 			sys_close (f->R.rdi);
