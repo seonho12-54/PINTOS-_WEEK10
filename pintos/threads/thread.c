@@ -13,6 +13,7 @@
 #include "intrinsic.h"
 #ifdef USERPROG
 #include "userprog/process.h"
+
 #endif
 
 /* Random value for struct thread's `magic' member.
@@ -488,6 +489,13 @@ init_thread (struct thread *t, const char *name, int priority) {
 	t->base_priority = priority;
 	t->effective_priority = priority;
 	t->wait_on_lock = NULL;
+	t->next_fd = 2; 
+
+	// fd_table 초기화
+	for (int i = 0; i < ARG_MAX; i++) {
+		t->fd_table[i] = NULL; 
+	}
+
 	list_init(&t->donation_candidates); // donation 리스트를 초기화한다.
 	// in_donation_list를 false로 초기화한다.
 	t->in_donation_list = false;

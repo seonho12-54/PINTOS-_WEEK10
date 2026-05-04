@@ -5,6 +5,7 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "intrinsic.h"
+#include "userprog/syscall.h"
 
 /* Number of page faults processed. */
 static long long page_fault_cnt;
@@ -83,10 +84,10 @@ kill (struct intr_frame *f) {
 		case SEL_UCSEG:
 			/* User's code segment, so it's a user exception, as we
 			   expected.  Kill the user process.  */
-			printf ("%s: dying due to interrupt %#04llx (%s).\n",
-					thread_name (), f->vec_no, intr_name (f->vec_no));
-			intr_dump_frame (f);
-			thread_exit ();
+			//user mode 예외는 커널 panic이 아니라 프로세스 종료로 처리한다.
+			// 종료 status는 -1로 관측되게 한다.
+			sys_exit(-1);
+			return;
 
 		case SEL_KCSEG:
 			/* Kernel's code segment, which indicates a kernel bug.
@@ -149,7 +150,14 @@ page_fault (struct intr_frame *f) {
 	/* Count page faults. */
 	page_fault_cnt++;
 
-	/* If the fault is true fault, show info and exit. */
+	// 사용자 모드 fault는 현재 프로세스를 exit(-1) 처리한다.
+	if (user) {
+		sys_exit(-1);
+		// 실제로 돌아오진 않지만 의도를 명확하게 하기 위해 추가
+		return;
+	}
+
+	// 커널 모드 fault/디버그 폴백 처리
 	printf ("Page fault at %p: %s error %s page in %s context.\n",
 			fault_addr,
 			not_present ? "not present" : "rights violation",

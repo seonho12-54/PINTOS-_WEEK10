@@ -64,9 +64,10 @@ flowchart LR
 2. `is_user_vaddr()`로 커널 영역 주소를 차단한다.
 3. 범위 검사를 통과한 주소만 page table 조회로 넘긴다.
 
-#### 구현 주석 (보면 되는 함수/구조체)
-- 위치: `pintos/userprog/syscall.c`의 syscall 인자 검증 helper
-- 위치: `pintos/include/threads/vaddr.h`의 `is_user_vaddr()`
+#### 구현 주석 (보면 되는 함수)
+- `is_valid_user_ptr()` 사용자 주소 판별
+- `validate_user_ptr()` 단일 포인터 검증
+- `fail_invalid_user_memory()` 실패 종료 경로
 
 ### 4.2 기능 B: 페이지 매핑 검사
 #### 개념 설명
@@ -85,59 +86,75 @@ flowchart TD
 2. 매핑 결과가 NULL이면 잘못된 포인터로 처리한다.
 3. 매핑된 주소만 실제 읽기/쓰기 대상으로 사용한다.
 
-#### 구현 주석 (보면 되는 함수/구조체)
-- 위치: `pintos/userprog/syscall.c`의 사용자 주소 검증 helper
-- 위치: `pintos/threads/mmu.c`의 `pml4_get_page()`
+#### 구현 주석 (보면 되는 함수)
+- `is_valid_user_ptr()` page table 매핑 확인
+- `validate_user_ptr()` 매핑 실패 시 종료 처리
+- `pml4_get_page()` 사용자 주소 매핑 조회
 
 ### 4.3 기능 C: syscall 인자 추출 경계
 #### 개념 설명
-syscall number와 인자는 사용자 스택에 있으므로, 인자를 읽는 순간부터 User Memory Access 정책이 적용되어야 합니다.
+x86-64 syscall 경로에서는 syscall number와 인자가 `struct intr_frame`의 레지스터 값으로 전달됩니다. 이 중 포인터 의미를 가진 인자는 개별 syscall 구현 함수가 사용하기 전에 User Memory Access 정책을 적용해야 합니다.
 
 #### 시퀀스 및 흐름
 ```mermaid
 flowchart LR
-  RSP[user rsp] --> SYSCALL_NO[syscall number 읽기]
-  SYSCALL_NO --> ARG[arg0/arg1/arg2 읽기]
-  ARG --> DISPATCH[syscall 분기]
+  REG[intr_frame registers] --> SYSCALL_NO[syscall number 확인]
+  SYSCALL_NO --> DISPATCH[syscall 분기]
+  DISPATCH --> ARG[포인터 인자 의미 확인]
+  ARG --> VALIDATE[validate_* 호출]
 ```
 
-1. 사용자 `rsp` 자체를 먼저 검증한다.
-2. syscall number 위치를 읽기 전에 해당 주소를 검증한다.
-3. 필요한 인자 개수만큼 각 인자 주소를 검증한다.
-4. 검증된 인자만 syscall 분기 로직으로 전달한다.
+1. `f->R.rax`로 syscall number를 확인한다.
+2. `f->R.rdi`, `f->R.rsi`, `f->R.rdx` 등 레지스터 인자를 syscall 구현 함수에 전달한다.
+3. `buffer`, `file`, `cmd_line`처럼 포인터 의미를 가진 인자는 해당 syscall 구현 함수 안에서 검증한다.
+4. 검증된 인자만 커널 로직에 사용한다.
 
 #### 구현 주석 (보면 되는 함수/구조체)
-- 위치: `pintos/userprog/syscall.c`의 `syscall_handler()`
-- 위치: `pintos/include/threads/interrupt.h`의 `struct intr_frame`
+- `syscall_handler()` syscall 번호와 레지스터 인자 분기
+- `sys_write()` 사용자 버퍼 검증 호출 지점
+- `struct intr_frame` syscall 인자 레지스터 확인
 
-## 5. 구현 주석 (위치별 정리)
-### 5.1 사용자 포인터 검증 helper
+## 5. 구현 주석 (함수 기준 정리)
+### 5.1 `is_valid_user_ptr()` 사용자 주소 판별
 - 위치: `pintos/userprog/syscall.c`
-- 역할: syscall에서 받은 user pointer를 공통 규칙으로 검증한다.
+- 역할: syscall에서 받은 user pointer가 접근 가능한 사용자 주소인지 판별한다.
 - 규칙 1: NULL 포인터를 실패 처리한다.
-- 규칙 2: `is_user_vaddr()` 실패 시 종료한다.
-- 규칙 3: 현재 page table에서 매핑되지 않은 주소를 실패 처리한다.
-- 금지 1: 검증 전 user pointer를 직접 역참조하지 않는다.
+- 규칙 2: `is_user_vaddr()`로 커널 주소를 차단한다.
+- 규칙 3: 현재 thread의 page table에서 매핑 여부를 확인한다.
+- 금지 1: 이 함수 안에서 user pointer를 직접 역참조하지 않는다.
 
 구현 체크 순서:
 1. 포인터 NULL 여부를 확인한다.
 2. 사용자 가상 주소 범위인지 확인한다.
-3. page table 매핑 여부를 확인한다.
-4. 실패 시 현재 프로세스를 `exit(-1)` 경로로 보낸다.
+3. `pml4_get_page()`로 page table 매핑 여부를 확인한다.
+4. 결과만 `bool`로 반환하고 종료 처리는 호출자에게 맡긴다.
 
-### 5.2 syscall 인자 읽기 경로
-- 위치: `pintos/userprog/syscall.c`의 `syscall_handler()`
-- 역할: 사용자 스택에서 syscall number와 인자를 안전하게 읽는다.
-- 규칙 1: `f->rsp`부터 검증한다.
-- 규칙 2: syscall number와 각 인자 주소를 읽기 전에 검증한다.
-- 규칙 3: 검증 실패 시 syscall dispatch에 진입하지 않는다.
-- 금지 1: `*(uint64_t *) f->rsp` 같은 직접 역참조를 검증 없이 수행하지 않는다.
+### 5.2 `validate_user_ptr()` 단일 포인터 검증
+- 위치: `pintos/userprog/syscall.c`
+- 역할: 사용자 주소 하나를 검증하고 실패 시 공통 종료 경로로 보낸다.
+- 규칙 1: 내부 판별은 `is_valid_user_ptr()`에 위임한다.
+- 규칙 2: 실패 시 `fail_invalid_user_memory()`를 호출한다.
+- 규칙 3: syscall 구현부가 포인터 하나를 직접 쓰기 전에 호출한다.
+- 금지 1: 실패를 syscall별 반환값으로 바꾸지 않는다.
 
 구현 체크 순서:
-1. syscall 진입 시 `rsp` 주소를 검증한다.
-2. syscall number 위치를 안전하게 읽는다.
-3. syscall별 인자 개수만큼 추가 주소를 검증한다.
-4. 검증된 값으로만 syscall switch/case에 진입한다.
+1. syscall 구현 함수 입구에서 사용자 포인터 인자를 확인한다.
+2. 포인터 하나만 필요한 경우 `validate_user_ptr(ptr)`를 호출한다.
+3. 실패하면 syscall 본문으로 돌아오지 않게 한다.
+4. 성공한 포인터만 이후 커널 로직에 넘긴다.
+
+### 5.3 `fail_invalid_user_memory()` 실패 종료 경로
+- 위치: `pintos/userprog/syscall.c`
+- 역할: User Memory Access 실패 정책을 한 곳으로 모은다.
+- 규칙 1: 잘못된 사용자 메모리는 현재 프로세스를 `exit(-1)`로 종료한다.
+- 규칙 2: `validate_*()` 계열 helper의 공통 실패 경로로 사용한다.
+- 규칙 3: 호출 이후 정상 syscall 반환값을 만들지 않는다.
+- 금지 1: bad pointer를 조용히 무시하거나 성공값으로 처리하지 않는다.
+
+구현 체크 순서:
+1. 실패 정책을 `exit(-1)`로 통일한다.
+2. `validate_user_ptr()`에서 이 함수로 실패를 모은다.
+3. 이후 `validate_user_buffer()`, `validate_user_string()`도 같은 경로를 사용한다.
 
 ## 6. 테스팅 방법
 - `bad-read`, `bad-write`: 잘못된 사용자 주소 직접 접근 방어

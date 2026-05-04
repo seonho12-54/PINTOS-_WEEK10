@@ -65,9 +65,10 @@ flowchart TD
 3. NUL 문자를 만나면 문자열 복사를 종료한다.
 4. 중간에 잘못된 주소가 나오면 현재 프로세스를 종료한다.
 
-#### 구현 주석 (보면 되는 함수/구조체)
-- 위치: `pintos/userprog/syscall.c`의 문자열 복사 helper
-- 위치: `pintos/tests/userprog/open-boundary.c`
+#### 구현 주석 (보면 되는 함수)
+- `validate_user_string()` 문자열 전체 검증
+- `validate_user_ptr()` 문자 위치별 단일 주소 검증
+- `sys_open()`, `sys_create()`, `sys_exec()` 문자열 인자 호출 지점
 
 ### 4.2 기능 B: 사용자 버퍼 읽기
 #### 개념 설명
@@ -86,9 +87,10 @@ flowchart LR
 3. page boundary를 넘는 경우 다음 페이지 매핑도 확인한다.
 4. 검증 완료 후 파일/콘솔 출력 로직에 넘긴다.
 
-#### 구현 주석 (보면 되는 함수/구조체)
-- 위치: `pintos/userprog/syscall.c`의 `write()` 처리 경로
-- 위치: `pintos/tests/userprog/write-boundary.c`
+#### 구현 주석 (보면 되는 함수)
+- `validate_user_buffer()` 버퍼 범위 검증
+- `sys_write()` 사용자 버퍼를 읽기 전 호출 지점
+- `putbuf()` 검증된 버퍼를 콘솔에 출력하는 경로
 
 ### 4.3 기능 C: 사용자 버퍼 쓰기
 #### 개념 설명
@@ -112,26 +114,27 @@ sequenceDiagram
 3. 복사 중 fault 가능성을 고려해 실패 시 프로세스를 종료한다.
 4. 성공 시 실제 읽은 바이트 수를 반환한다.
 
-#### 구현 주석 (보면 되는 함수/구조체)
-- 위치: `pintos/userprog/syscall.c`의 `read()` 처리 경로
-- 위치: `pintos/tests/userprog/read-boundary.c`
+#### 구현 주석 (보면 되는 함수)
+- `validate_user_buffer()` 사용자 버퍼 범위 검증
+- `sys_read()` 사용자 버퍼에 쓰기 전 호출 지점
+- `validate_user_buffer_writable()` 이후 쓰기 권한 검증 확장 지점
 
-## 5. 구현 주석 (위치별 정리)
-### 5.1 문자열 복사 helper
+## 5. 구현 주석 (함수 기준 정리)
+### 5.1 `validate_user_string()` 문자열 인자 검증
 - 위치: `pintos/userprog/syscall.c`
-- 역할: 사용자 문자열을 NUL 종료까지 안전하게 읽는다.
+- 역할: 사용자 문자열 포인터가 NUL 종료까지 접근 가능한지 검증한다.
 - 규칙 1: 시작 주소뿐 아니라 각 문자 위치를 검증한다.
-- 규칙 2: NUL 종료를 발견하면 복사를 종료한다.
-- 규칙 3: boundary를 넘어가는 문자열을 허용하되, 다음 페이지가 유효해야 한다.
+- 규칙 2: NUL 종료를 발견하면 검증을 종료한다.
+- 규칙 3: boundary를 넘어가는 문자열은 다음 페이지가 유효할 때만 허용한다.
 - 금지 1: `strlen(user_ptr)`를 검증 없이 호출하지 않는다.
 
 구현 체크 순서:
-1. 사용자 문자열 시작 주소를 검증한다.
-2. 문자 단위로 주소 검증과 읽기를 반복한다.
-3. NUL 발견 시 커널 문자열을 완성한다.
+1. 문자열 시작 주소를 `validate_user_ptr()`로 검증한다.
+2. 문자 위치마다 접근 전 검증을 반복한다.
+3. NUL 발견 시 문자열 검증을 완료한다.
 4. 중간 실패 시 현재 프로세스를 종료한다.
 
-### 5.2 버퍼 범위 검증 helper
+### 5.2 `validate_user_buffer()` 버퍼 범위 검증
 - 위치: `pintos/userprog/syscall.c`
 - 역할: 사용자 버퍼의 전체 `[buffer, buffer + size)` 범위를 검증한다.
 - 규칙 1: `size == 0`은 빈 범위로 처리한다.
