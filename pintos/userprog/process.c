@@ -892,11 +892,11 @@ load (const char *file_name, struct intr_frame *if_) {
 	success = true;
 
 done:
-    if (!success && file != NULL) {
-        if (t->running_file == file)
-            t->running_file = NULL;
-        file_close (file);
-    }
+    if (success) {
+		t->running_file = file;  // ← 추가 필요
+	} else if (file != NULL) {
+		file_close (file);
+	}
 	return success;
 }
 
