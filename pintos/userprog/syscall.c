@@ -70,9 +70,9 @@ static struct lock filesys_lock;
  * The syscall instruction works by reading the values from the the Model
  * Specific Register (MSR). For the details, see the manual. */
 
-#define MSR_STAR 0xc0000081			/* Segment selector msr */
-#define MSR_LSTAR 0xc0000082		/* Long mode SYSCALL target */
-#define MSR_SYSCALL_MASK 0xc0000084 /* Mask for the eflags */
+#define MSR_STAR 0xc0000081			/* syscall 때 사용할 segment selector 설정 위치 */
+#define MSR_LSTAR 0xc0000082		/* syscall 때 점프할 커널 함수 주소를 저장하는 위치 */
+#define MSR_SYSCALL_MASK 0xc0000084 /* syscall 진입 시 꺼둘 CPU flag 설정 위치 */
 
 void syscall_init(void)
 {
@@ -193,28 +193,72 @@ validate_user_string(const char *str)
 }
 
 // 기본 헬퍼 함수
-static struct file *find_file_by_fd(int fd)
-{
-	if (fd < 2 || fd >= ARG_MAX)
-		return NULL;
-
-	return thread_current()->fd_table[fd];
-}
-
-static int fd_alloc(struct file *file)
+static struct file *
+find_file_by_fd(int fd)
 {
 	struct thread *curr = thread_current();
 
-	if (file == NULL)
-		return -1;
+	if (curr->fd_table == NULL)
+		return NULL;
 
-	for (int fd = 2; fd < ARG_MAX; fd++)
-	{
-		if (curr->fd_table[fd] == NULL)
-		{
+	if (fd < 2 || fd >= curr->capacity)
+		return NULL;
+
+	return curr->fd_table[fd];
+}
+
+static bool
+fd_table_init(struct thread *t) {    
+    t->fd_table = calloc(t->capacity, sizeof(struct file *));
+    return t->fd_table != NULL;
+}
+
+static void fd_increase_table_size(void) {
+	struct thread *curr = thread_current();
+
+	struct file **new_table = calloc(curr->capacity * 2, sizeof(struct file *));
+	if (new_table == NULL) {
+		return;
+	}
+
+	for (int i = 2; i < curr->capacity; i++) {
+		new_table[i] = curr->fd_table[i];
+	}
+
+	free(curr->fd_table);
+	curr->fd_table = new_table;
+	curr->capacity *= 2;
+}
+
+
+// 디스크에 있는 파일을 가리키는 파일 포인터를 현재 스레드의 파일 디스크립터 테이블에 등록하고, 
+// 새 파일 디스크립터 번호를 반환하는 함수 
+static int fd_alloc(struct file *file)
+{
+	if (file == NULL) {
+		return -1;
+	}
+
+	struct thread *curr = thread_current();
+
+	if (curr->fd_table == NULL) {
+		if (!fd_table_init(curr)) {
+			return -1;
+		}
+	}
+
+	for (int fd = 2; fd < curr->capacity; fd++) {
+		if (curr->fd_table[fd] == NULL) {
 			curr->fd_table[fd] = file;
-			if (fd >= curr->next_fd)
-				curr->next_fd = fd + 1;
+			return fd;
+		}
+	}
+
+	fd_increase_table_size();
+
+	for (int fd = 2; fd < curr->capacity; fd++) {
+		if (curr->fd_table[fd] == NULL) {
+			curr->fd_table[fd] = file;
 			return fd;
 		}
 	}
@@ -237,7 +281,7 @@ static int sys_write(int fd, const void *buffer, unsigned size)
 	{
 		return -1;
 	}
-	if (fd >= ARG_MAX)
+	if (fd >= thread_current()->capacity)
 	{
 		return -1;
 	}
@@ -258,22 +302,23 @@ static int sys_write(int fd, const void *buffer, unsigned size)
 static int sys_filesize(int fd)
 {
 	struct file *file;
-	if (fd < 2)
-	{
+	if (fd < 2) {
 		return -1;
 	}
-	if (fd >= ARG_MAX)
-	{
+	if (fd >= thread_current()->capacity) {
 		return -1;
 	}
+
 	file = find_file_by_fd(fd);
-	if (file == NULL)
-	{
+
+	if (file == NULL) {
 		return -1;
 	}
+
 	lock_acquire(&filesys_lock);
 	int length = file_length(file);
 	lock_release(&filesys_lock);
+
 	return length;
 }
 
@@ -281,19 +326,22 @@ static int sys_read(int fd, void *buffer, unsigned size)
 {
 	struct file *file;
 	validate_user_buffer(buffer, size);
-	if (size == 0)
+	if (size == 0) {
 		return 0;
-	if (fd == 1)
+	}
+	if (fd == 1) {
 		return -1;
-	if (fd < 0)
+	}
+	if (fd < 0) {
 		return -1;
-	if (fd >= ARG_MAX)
+	}
+	if (fd >= thread_current()->capacity) {
 		return -1;
+	}
 
 	if (fd == 0) // 표준입력,  size만큼 반복, 문자 하나를 읽어서 버퍼에 저장후, size반환
 	{
-		for (unsigned i = 0; i < size; i++)
-		{
+		for (unsigned i = 0; i < size; i++) {
 			((uint8_t *)buffer)[i] = input_getc();
 		}
 		return size;
@@ -312,9 +360,11 @@ static int sys_read(int fd, void *buffer, unsigned size)
 	return -1;
 }
 
+// 파일을 열고 파일 디스크립터(fd)를 반환하는 시스템 콜 함수 
 static int
 sys_open(const char *file_name)
 {
+
 	if (!is_valid_user_ptr(file_name))
 	{
 		sys_exit(-1);
@@ -327,51 +377,72 @@ sys_open(const char *file_name)
 		return -1;
 	}
 
-	// sys_open이 filesys_open(file_name)을 호출
+	// 파일 시스템은 여러 프로세스/스레드가 동시에 접근할 수 있으므로 락 획득 
+	lock_acquire(&filesys_lock);
+
 	// filesys_open이 디렉터리에서 파일 이름을 찾고 inode를 얻음
 	// filesys_open 내부에서 file_open(inode) 호출
 	// file_open이 struct file * 객체를 만들어 반환
-	lock_acquire(&filesys_lock);
 	struct file *file = filesys_open(file_name);
+
+	// 파일 시스템 접근이 끝났으므로 락 해제 
 	lock_release(&filesys_lock);
 
-	// open-missing 테스트
-	if (file == NULL)
-	{
+	if (file == NULL) {
 		return -1;
 	}
 
+	// 열린 파일 객체를 현재 프로세스의 fd 테이블에 등록하고 fd 번호를 할당 
 	int fd = fd_alloc(file);
-	if (fd == -1)
-	{
+
+	// fd 할당에 실패한 경우 
+	// 예: fd 테이블이 가득 찬 경우 
+	if (fd == -1) {
+		// fd 테이블에 등록하지 못했으므로 열어 둔 파일을 닫아야 함 
 		lock_acquire(&filesys_lock);
+
+		// filesys_open으로 얻은 File 객체의 자원을 해제 
 		file_close(file);
+
+		// 파일 시스템 작업이 끝났으므로 락 해제 
 		lock_release(&filesys_lock);
 	}
 
+	// 성공하면 할당된 fd 반환 
+	// 실패한 경우 fd는 -1이므로 그대로 -1 반환 
 	return fd;
 }
 
+// 파일 디스크립터 fd에 해당하는 열린 파일을 닫는 시스템 콜 함수 
 static void sys_close(int fd){
-	if (fd < 2) {
-		return;
-	}
-	if (fd >= ARG_MAX){
+	// fd 0과 fd 1은 표준 입력/출력용이므로 close 대상에서 제외한다 
+	// 또한 fd가 fd_table의 범위를 벗어나면 잘못된 fd이므로 아무 작업도 하지 않는다 
+	if (fd < 2 || fd >= thread_current()->capacity) {
 		return;
 	}
 
-	struct thread * curr = thread_current();
-	struct file * file;
+	struct thread *curr = thread_current();
+	struct file *file;
+
+	// 현재 프로세스의 fd_table에서 fd에 해당하는 파일 객체를 찾는다 
 	file = find_file_by_fd(fd);
 
+	// fd에 해당하는 열린 파일이 없으면 닫을 대상이 없으므로 반환한다 
 	if (file == NULL) {
 		return;
 	}
 	
+	// 파일 시스템 자료구조에 동시에 접근하지 않도록 락을 획득한다
 	lock_acquire(&filesys_lock);
+
+	// fd에 연결된 파일 객체를 닫고 관련 자원을 해제한다 
 	file_close(file);
+
+	// 파일 닫기 작업이 끝났으므로 락을 해제한다 
 	lock_release(&filesys_lock);
-	curr->fd_table[fd]=NULL;
+
+	// fd_table에서 해당 fd 칸을 비워서 더 이상 사용 중이 아님을 표시한다 
+	curr->fd_table[fd] = NULL;
 }
 
 void sys_exit(int status)
@@ -382,6 +453,9 @@ void sys_exit(int status)
 	thread_exit();
 }
 
+// 파일 생성 시스템 콜을 처리하는 함수 
+// file 이름으로 initial_size 크기의 새 파일을 생성하고, 
+// 성공하면 true, 실패하면 false를 반환한다
 static bool
 sys_create(const char *file, unsigned initial_size)
 {
@@ -402,8 +476,14 @@ sys_create(const char *file, unsigned initial_size)
 		return false;
 	}
 
+	// 파일 시스템은 여러 스레드가 동시에 접근할 수 있으므로 락을 획득한다 
 	lock_acquire(&filesys_lock);
+
+	// 실제 파일 생성 작업을 filesys_create 함수에 맡긴다
+	// file 이름으로 initial_size 크기의 파일 생성을 시도한다 
 	bool is_file_created = filesys_create(file, initial_size);
+
+	// 파일 시스템 작업이 끝났으므로 락을 해제한다 
 	lock_release(&filesys_lock);
 
 	if (!is_file_created)
@@ -480,7 +560,7 @@ void syscall_handler(struct intr_frame *f UNUSED)
 {
 	// 10번이 SYS_WRITE
 	int sys_call = f->R.rax;
-
+	
 	switch (sys_call)
 	{
 	case SYS_WRITE:

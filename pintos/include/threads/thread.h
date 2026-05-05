@@ -132,13 +132,16 @@ struct thread {
 
 	/* Owned by userprog/process.c. */
 	uint64_t *pml4;                     /* Page map level 4 */
-	struct file *fd_table[ARG_MAX];
+
+	struct file **fd_table;
+	int capacity; // fd_table 사이즈 
 	int next_fd;
+
 	struct list children;
 	struct child_status *my_status;
 	int exit_status;
 	struct file *running_file;
-
+	
 #ifdef VM
 	/* Table for whole virtual memory owned by thread. */
 	struct supplemental_page_table spt;
