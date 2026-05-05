@@ -197,7 +197,7 @@ static struct file *find_file_by_fd(int fd)
 {
 	if (fd < 2 || fd >= ARG_MAX)
 		return NULL;
-
+	//유저 프로그램이 넘겨준 fd로 현재 프로세스의 fd_table에서 file*를 찾아 반환
 	return thread_current()->fd_table[fd];
 }
 
@@ -225,7 +225,7 @@ static int fd_alloc(struct file *file)
 static int sys_write(int fd, const void *buffer, unsigned size)
 {
 	struct file *file;
-
+	//포인터 검사
 	validate_user_buffer(buffer, size);
 	// 표준출력, 버퍼에서 size만큼 읽어서 터미널에 출력
 	if (fd == 1)
@@ -290,11 +290,12 @@ static int sys_read(int fd, void *buffer, unsigned size)
 	if (fd >= ARG_MAX)
 		return -1;
 
-	if (fd == 0) // 표준입력,  size만큼 반복, 문자 하나를 읽어서 버퍼에 저장후, size반환
+	if (fd == 0) // 표준입력
 	{
 		for (unsigned i = 0; i < size; i++)
 		{
-			((uint8_t *)buffer)[i] = input_getc();
+			//키보드 입력을 읽어서 유저 버퍼에 복사함
+			((uint8_t *)buffer)[i] = input_getc(); 
 		}
 		return size;
 	}
@@ -305,6 +306,7 @@ static int sys_read(int fd, void *buffer, unsigned size)
 		if (file == NULL)
 			return -1;
 		lock_acquire(&filesys_lock);
+		//파일에서 size만큼 읽어서 유저 버퍼에 복사
 		int bytes = file_read(file, buffer, size);
 		lock_release(&filesys_lock);
 		return bytes;
