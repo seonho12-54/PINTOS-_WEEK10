@@ -213,21 +213,28 @@ fd_table_init(struct thread *t) {
     return t->fd_table != NULL;
 }
 
-static void fd_increase_table_size(void) {
-	struct thread *curr = thread_current();
+static bool
+fd_increase_table_size(void)
+{
+    struct thread *curr = thread_current();
+    int old_capacity = curr->capacity;
+    int new_capacity = old_capacity * 2;
 
-	struct file **new_table = calloc(curr->capacity * 2, sizeof(struct file *));
-	if (new_table == NULL) {
-		return;
+    struct file **new_table = calloc(new_capacity, sizeof(struct file *));
+
+    if (new_table == NULL) {
+        return false;
 	}
 
-	for (int i = 2; i < curr->capacity; i++) {
-		new_table[i] = curr->fd_table[i];
+    for (int i = 2; i < old_capacity; i++) {
+        new_table[i] = curr->fd_table[i];
 	}
 
-	free(curr->fd_table);
-	curr->fd_table = new_table;
-	curr->capacity *= 2;
+    free(curr->fd_table);
+    curr->fd_table = new_table;
+    curr->capacity = new_capacity;
+
+    return true;
 }
 
 
@@ -253,17 +260,16 @@ static int fd_alloc(struct file *file)
 			return fd;
 		}
 	}
+	
+	int old_capacity = curr->capacity; 
 
-	fd_increase_table_size();
-
-	for (int fd = 2; fd < curr->capacity; fd++) {
-		if (curr->fd_table[fd] == NULL) {
-			curr->fd_table[fd] = file;
-			return fd;
-		}
+	if (!fd_increase_table_size()) {
+		return -1; 
 	}
 
-	return -1;
+	curr->fd_table[old_capacity] = file; 
+	
+	return old_capacity; 
 }
 
 static int sys_write(int fd, const void *buffer, unsigned size)
