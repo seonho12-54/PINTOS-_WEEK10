@@ -41,6 +41,8 @@ struct initd_args {
 	struct child_status *child_status;
 };
 
+
+
 static void
 child_status_release(struct child_status *cs)
 {
@@ -79,30 +81,45 @@ static bool
 duplicate_fd_table(struct thread *parent, struct thread *child)
 {
 	child->next_fd = parent->next_fd;
+	child->capacity = parent->capacity;
+	child->fd_table = NULL;
 
-	for (int fd = 2; fd < ARG_MAX; fd++)
-	{
+	if (parent->fd_table == NULL) {
+		return true;
+	}
+
+	child->fd_table = calloc(child->capacity, sizeof(struct file *));
+	if (child->fd_table == NULL) {
+		child->capacity = 0;
+		return false;
+	}
+
+	for (int fd = 2; fd < parent->capacity; fd++) {
 		struct file *parent_file = parent->fd_table[fd];
+
 		if (parent_file == NULL)
 			continue;
 
 		child->fd_table[fd] = file_duplicate(parent_file);
-		if (child->fd_table[fd] == NULL)
-		{
-			for (int used_fd = 2; used_fd < fd; used_fd++)
-			{
-				if (child->fd_table[used_fd] != NULL)
-				{
+
+		if (child->fd_table[fd] == NULL) {
+			for (int used_fd = 2; used_fd < fd; used_fd++) {
+				if (child->fd_table[used_fd] != NULL) {
 					file_close(child->fd_table[used_fd]);
 					child->fd_table[used_fd] = NULL;
 				}
 			}
+
+			free(child->fd_table);
+			child->fd_table = NULL;
+			child->capacity = 0;
 			return false;
 		}
 	}
 
 	return true;
 }
+
 
 static bool
 duplicate_running_file(struct thread *parent, struct thread *child)
@@ -320,6 +337,7 @@ process_create_initd (const char *file_name) {
 		palloc_free_page (fn_copy);
 		return TID_ERROR; 
 	}
+	
 	strlcpy(prog_copy, file_name, PGSIZE); 
 	prog_copy = strtok_r(prog_copy, " ", &file_name); 
 
@@ -643,11 +661,15 @@ process_wait (tid_t child_tid UNUSED) {
 	struct thread *curr = thread_current();
 	struct child_status *target = NULL;
 
+	// 현재 프로세스가 가지고 있는 자식 목록 curr->children을 처음부터 끝까지 순회한다 
 	for (struct list_elem *e = list_begin(&curr->children);
 		 e != list_end(&curr->children);
 		 e = list_next(e))
 	{
+		// 리스트 원소 e를 child_status 구조체 포인터로 변환한다 (list_elem)
 		struct child_status *cs = list_entry(e, struct child_status, elem);
+
+		// 현재 확인 중인 자식의 tid가 기다리려는 child_tid와 같은지 확인한다 
 		if (cs->tid == child_tid)
 		{
 			target = cs;
@@ -655,16 +677,33 @@ process_wait (tid_t child_tid UNUSED) {
 		}
 	}
 
+	// target이 NULL이면 child_tid가 현재 프로세스의 자식이 아니라는 의미이다 
+	// target->waited가 true이면 이미 wait한 자식이라는 의미이다 
+	// 두 경우 모두 wait 실패이므로 -1을 반환한다 
 	if (target == NULL || target->waited)
 		return -1;
 
+	// 이 자식 프로세스에 대해 wait을 호출했음을 표시한다
+	// 같은 자식에 대해 중복 wait하는 것을 막기 위해 사용한다 
 	target->waited = true;
+
+	// 자식 프로세스가 아직 종료되지 않았다면
+	// 부모 프로세스는 자식이 종료될 때까지 wait_sema에서 잠든다 
 	if (!target->exited)
 		sema_down(&target->wait_sema);
 
+	// 자식 프로세스가 종료되면서 저장해 둔 exit status를 가져온다 
 	int status = target->exit_status;
+
+	// 현재 부모 프로세스의 children 리스트에서 해당 자식 정보를 제거한다
+	// wait이 끝난 자식이 더 이상 부모의 자식 관리 목록에 남겨 둘 필요가 없다 
 	list_remove(&target->elem);
+	
+	// 부모가 child_status를 더 이상 사용하지 않으므로 참조를 해제한다 
+	// child_status_release 내부에서 참조 카운트가 0이 되면 메모리를 free할 수 있다 
 	child_status_release(target);
+
+	// 자식 프로세스의 종료 상태를 반환한다
 	return status;
 }
 
@@ -690,13 +729,19 @@ process_exit (void) {
 		child_status_release(cs);
 	}
 
-	for (int fd = 2; fd < ARG_MAX; fd++)
-	{
-		if (curr->fd_table[fd] != NULL)
+	if (curr->fd_table != NULL) {
+		for (int fd = 2; fd < thread_current()->capacity; fd++)
 		{
-			file_close(curr->fd_table[fd]);
-			curr->fd_table[fd] = NULL;
+			if (curr->fd_table[fd] != NULL)
+			{
+				file_close(curr->fd_table[fd]);
+				curr->fd_table[fd] = NULL;
+			}
 		}
+
+		free(curr->fd_table); 
+		curr->fd_table = NULL; 
+		curr->capacity = 16;
 	}
 
 	process_cleanup ();

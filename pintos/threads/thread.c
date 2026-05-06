@@ -491,9 +491,15 @@ init_thread (struct thread *t, const char *name, int priority) {
 	t->wait_on_lock = NULL;
 
 	t->next_fd = 2;
-	for (int i = 0; i < ARG_MAX; i++) {
-		t->fd_table[i] = NULL;
-	}
+	
+	// for (int i = 0; i < ARG_MAX; i++) {
+	// 	t->fd_table[i] = NULL;
+	// }
+
+	// 동적 fd 할당 (초기 할당 값 16)
+	t->capacity = 16;
+	t->fd_table = NULL;
+
 	list_init (&t->children);
 	t->my_status = NULL;
 	t->exit_status = 0;
