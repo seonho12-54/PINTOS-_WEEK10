@@ -80,7 +80,6 @@ child_status_create(void)
 static bool
 duplicate_fd_table(struct thread *parent, struct thread *child)
 {
-	child->next_fd = parent->next_fd;
 	child->capacity = parent->capacity;
 	child->fd_table = NULL;
 
@@ -427,7 +426,7 @@ process_fork (const char *name, struct intr_frame *if_ UNUSED) {
 
 	cs->tid = tid;
 	sema_down(&cs->fork_sema);
-
+	
 	if (!cs->fork_success)
 	{
 		list_remove(&cs->elem);

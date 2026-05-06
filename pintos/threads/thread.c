@@ -489,8 +489,6 @@ init_thread (struct thread *t, const char *name, int priority) {
 	t->base_priority = priority;
 	t->effective_priority = priority;
 	t->wait_on_lock = NULL;
-
-	t->next_fd = 2;
 	
 	// for (int i = 0; i < ARG_MAX; i++) {
 	// 	t->fd_table[i] = NULL;
